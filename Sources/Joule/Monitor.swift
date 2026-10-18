@@ -20,6 +20,14 @@ struct Blocker: Identifiable, Hashable {
     var id: String { app.key + reason }
 }
 
+/// Measured process power right now; the rest of the system draw is display & hardware.
+struct LiveSplit: Hashable {
+    var apps: Double
+    var services: Double
+
+    func hardware(total: Double) -> Double { max(0, total - apps - services) }
+}
+
 struct PowerPoint: Identifiable, Hashable {
     var date: Date
     var watts: Double
@@ -51,6 +59,9 @@ final class Monitor: ObservableObject {
 
     @Published private(set) var power: PowerReading?
     @Published private(set) var liveApps: [LiveApp] = []
+    @Published private(set) var liveSplit: LiveSplit?
+    /// Set once a read failed: this Mac has no battery gauge.
+    @Published private(set) var noBattery = false
     @Published private(set) var blockers: [Blocker] = []
     @Published private(set) var recentPower: [PowerPoint] = []
     @Published private(set) var today: Report?
@@ -117,6 +128,8 @@ final class Monitor: ObservableObject {
 
     func start() {
         try? store?.prune()
+        // The sparkline starts filled after a restart instead of empty.
+        powerBuffer = ((try? store?.powerSeries(since: Date().addingTimeInterval(-30 * 60))) ?? []).map { PowerPoint(date: $0.0, watts: $0.1) }
         refreshDerived()
         readPower()
         if !demo {
@@ -144,6 +157,7 @@ final class Monitor: ObservableObject {
 
     func beginLive() {
         liveClients += 1
+        if latest == nil { readPower() }
         guard liveTimer == nil else { return }
         publishLive()
         refreshDerived(force: true)
@@ -172,6 +186,7 @@ final class Monitor: ObservableObject {
         readPower()
         if demo {
             liveApps = DemoData.live().enumerated().map { LiveApp(app: $1.0, watts: $1.1, gpuShare: $1.2, background: $0 > 0) }
+            liveSplit = LiveSplit(apps: liveApps.reduce(0) { $0 + $1.watts }, services: 0.7)
             if let claude = liveApps.first(where: { $0.app.name == "Claude" }) {
                 blockers = [Blocker(app: claude.app, reason: "Electron", since: Date().addingTimeInterval(-2400))]
             }
@@ -182,6 +197,10 @@ final class Monitor: ObservableObject {
         updateBlockers(pidMap)
         guard let interval = liveAccountant.ingest(snapshot) else { return }
         let front = frontmostKey()
+        let seconds = interval.duration
+        liveSplit = LiveSplit(
+            apps: interval.usages.filter { $0.app.category == .app }.reduce(0) { $0 + $1.joules } / seconds,
+            services: interval.usages.filter { $0.app.category != .app }.reduce(0) { $0 + $1.joules } / seconds)
         liveApps = interval.usages
             .filter { $0.app.category == .app || $0.joules / interval.duration > 0.3 }
             .prefix(8)
@@ -198,7 +217,7 @@ final class Monitor: ObservableObject {
     // MARK: Recording
 
     private func readPower() {
-        guard let reading = PowerProbe.read() else { return }
+        guard let reading = PowerProbe.read() else { noBattery = true; return }
         latest = reading
         menu.update(power: reading, unread: unreadCount)
         powerBuffer.append(PowerPoint(date: reading.date, watts: reading.systemWatts))
@@ -241,9 +260,12 @@ final class Monitor: ObservableObject {
         refreshDerived()
     }
 
+    /// Snapshot mode renders windows that may sit behind other apps.
+    static var forceVisible = false
+
     /// A visible window other than the status item itself (which is always "visible").
     static var someoneIsLooking: Bool {
-        NSApp.windows.contains { window in
+        forceVisible || NSApp.windows.contains { window in
             window.isVisible && window.occlusionState.contains(.visible) && window.frame.height > 60
                 && !String(describing: type(of: window)).contains("StatusBar")
         }
@@ -319,6 +341,16 @@ final class Monitor: ObservableObject {
     // MARK: Sleep, wake, power source
 
     private func observeSystem() {
+        // A window coming into view gets fresh numbers at once instead of on the next live tick.
+        for name in [NSWindow.didChangeOcclusionStateNotification, NSWindow.didBecomeKeyNotification] {
+            NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated {
+                    guard let self, self.stale, Self.someoneIsLooking else { return }
+                    self.refreshDerived(force: true)
+                    if self.liveTimer != nil { self.liveTick() }
+                }
+            }
+        }
         let center = NSWorkspace.shared.notificationCenter
         center.addObserver(forName: NSWorkspace.willSleepNotification, object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated { self?.willSleep() }

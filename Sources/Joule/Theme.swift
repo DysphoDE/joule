@@ -140,6 +140,14 @@ struct Pill: View {
 }
 
 extension PowerReading {
+    var shortStateText: String {
+        switch source {
+        case .battery: minutesToEmpty.map { "Akku · noch \(Format.duration(Double($0) * 60, short: true))" } ?? "Akkubetrieb"
+        case .charging: minutesToFull.map { "Lädt · voll in \(Format.duration(Double($0) * 60, short: true))" } ?? "Lädt"
+        case .adapter: "Am Netzteil"
+        }
+    }
+
     var stateText: String {
         switch source {
         case .battery:

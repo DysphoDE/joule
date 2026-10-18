@@ -70,7 +70,7 @@ private struct BatteryCard: View {
                     }
                 }
             } else {
-                EmptyNote(text: "Dieser Mac meldet keinen Akku.")
+                EmptyNote(text: monitor.noBattery ? "Dieser Mac meldet keinen Akku." : "Lese Akkuwerte …")
             }
         }
     }
@@ -110,6 +110,9 @@ private struct PowerCard: View {
                         }
                     }
                 }
+                if let power = monitor.power {
+                    PowerSplitView(total: power.systemWatts, split: monitor.liveSplit)
+                }
                 Chart(monitor.recentPower) { point in
                     AreaMark(x: .value("Zeit", point.date), y: .value("Watt", point.watts))
                         .interpolationMethod(.monotone)
@@ -119,14 +122,14 @@ private struct PowerCard: View {
                         .foregroundStyle(Theme.accent)
                         .lineStyle(StrokeStyle(lineWidth: 2))
                 }
-                .chartXScale(domain: Date().addingTimeInterval(-30 * 60)...Date())
+                .chartXScale(domain: (monitor.recentPower.first?.date ?? Date().addingTimeInterval(-60))...Date())
                 .chartYAxis { AxisMarks(position: .trailing, values: .automatic(desiredCount: 3)) { value in AxisGridLine(); AxisValueLabel { if let w = value.as(Double.self) { Text(Format.watts(w)) } } } }
                 .chartXAxis { AxisMarks(values: .stride(by: .minute, count: 10)) { AxisValueLabel(format: .dateTime.hour().minute()) } }
                 .frame(height: 96)
                 .overlay {
                     if monitor.recentPower.count < 2 { Text("Die Kurve füllt sich in den nächsten Minuten.").font(.caption).foregroundStyle(.secondary) }
                 }
-                Text("Gesamter Mac inkl. Display, gemessen am Akku. Letzte 30 Minuten.")
+                Text("Gesamter Mac inkl. Display, gemessen am Akku. Bis zu 30 Minuten zurück.")
                     .font(.system(size: 11)).foregroundStyle(.tertiary)
             }
         }
@@ -193,7 +196,7 @@ private struct LiveAppsCard: View {
         Card {
             VStack(alignment: .leading, spacing: 12) {
                 HStack {
-                    SectionTitle(title: "Gerade aktiv", subtitle: "Prozessor-Energie pro App, alle 3 Sekunden")
+                    SectionTitle(title: "Gerade aktiv", subtitle: "Prozessor-Energie pro App, alle 3 Sekunden – Display & Hardware stecken nicht darin")
                     Spacer()
                     LivePulse()
                 }
@@ -234,7 +237,7 @@ struct LiveAppRow: View {
                 }
             }
             Spacer(minLength: 8)
-            Text(Format.watts(item.watts))
+            Text(Format.smallWatts(item.watts))
                 .font(Theme.number(compact ? 12 : 13, weight: .medium))
                 .foregroundStyle(.secondary)
         }
@@ -387,5 +390,55 @@ struct ErrorBanner: View {
             .padding(12)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(RoundedRectangle(cornerRadius: 10).fill(Color.red.opacity(0.08)))
+    }
+}
+
+/// Splits the whole-machine draw so the parts add up to the number on top.
+struct PowerSplitView: View {
+    var total: Double
+    var split: LiveSplit?
+    var compact = false
+
+    private var parts: [(String, Double, Color)] {
+        guard let split else { return [] }
+        return [("Apps", split.apps, Theme.apps),
+                ("macOS-Dienste", split.services, Theme.services),
+                ("Display & Hardware", split.hardware(total: total), Theme.hardware)]
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            GeometryReader { proxy in
+                HStack(spacing: 2) {
+                    if parts.isEmpty {
+                        Capsule().fill(Color.primary.opacity(0.08))
+                    } else {
+                        let sum = max(0.001, parts.reduce(0) { $0 + $1.1 })
+                        ForEach(parts, id: \.0) { part in
+                            Rectangle().fill(part.2)
+                                .frame(width: max(part.1 > 0.01 ? 3 : 0, (proxy.size.width - 4) * part.1 / sum))
+                        }
+                    }
+                }
+                .clipShape(Capsule())
+            }
+            .frame(height: compact ? 6 : 8)
+            HStack(spacing: compact ? 10 : 16) {
+                if parts.isEmpty {
+                    Text("Aufteilung wird gemessen …").foregroundStyle(.secondary)
+                } else {
+                    ForEach(parts, id: \.0) { part in
+                        HStack(spacing: 4) {
+                            Circle().fill(part.2).frame(width: 6, height: 6)
+                            Text(compact && part.0 == "Display & Hardware" ? "Display & Co." : (compact && part.0 == "macOS-Dienste" ? "Dienste" : part.0))
+                                .foregroundStyle(.secondary)
+                            Text(Format.watts(part.1)).monospacedDigit()
+                        }
+                        .lineLimit(1)
+                    }
+                }
+            }
+            .font(.system(size: compact ? 10.5 : 11.5))
+        }
     }
 }

@@ -26,56 +26,22 @@ struct MenuPanel: View {
     @Environment(\.openWindow) private var openWindow
     @AppStorage("page") private var page = Page.now.rawValue
 
+    /// Every section has a fixed height: macOS anchors the panel at its bottom edge,
+    /// so a growing or shrinking panel would drift away from the menu bar.
+    private static let rows = 5
+    private static let rowHeight: CGFloat = 26
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: 12) {
             header
-            if monitor.recentPower.count > 1 {
-                Chart(monitor.recentPower) { point in
-                    AreaMark(x: .value("Zeit", point.date), y: .value("W", point.watts))
-                        .interpolationMethod(.monotone)
-                        .foregroundStyle(LinearGradient(colors: [Theme.accent.opacity(0.4), Theme.accent.opacity(0.02)], startPoint: .top, endPoint: .bottom))
-                    LineMark(x: .value("Zeit", point.date), y: .value("W", point.watts))
-                        .interpolationMethod(.monotone)
-                        .foregroundStyle(Theme.accent)
-                }
-                .chartXAxis(.hidden)
-                .chartYAxis(.hidden)
-                .chartXScale(domain: Date().addingTimeInterval(-30 * 60)...Date())
-                .frame(height: 44)
+            if let power = monitor.power {
+                PowerSplitView(total: power.systemWatts, split: monitor.liveSplit, compact: true)
             }
-
-            VStack(alignment: .leading, spacing: 4) {
-                Text("Gerade aktiv").font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary)
-                if monitor.liveApps.isEmpty {
-                    Text("Messe …").font(.system(size: 12)).foregroundStyle(.secondary).padding(.vertical, 6)
-                } else {
-                    let maximum = max(1, monitor.liveApps.map(\.watts).max() ?? 1)
-                    ForEach(monitor.liveApps.prefix(5)) { LiveAppRow(item: $0, maximum: maximum, compact: true) }
-                }
-            }
-
-            if !monitor.blockers.isEmpty {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("Hält wach").font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary)
-                    ForEach(monitor.blockers.prefix(3)) { BlockerRow(blocker: $0) }
-                }
-            }
-
-            if monitor.unreadAlerts > 0 {
-                Button { open(.alerts) } label: {
-                    HStack {
-                        Image(systemName: "bell.badge.fill").foregroundStyle(Theme.accent)
-                        Text(monitor.unreadAlerts == 1 ? "1 neuer Hinweis" : "\(monitor.unreadAlerts) neue Hinweise")
-                        Spacer()
-                        Image(systemName: "chevron.right").foregroundStyle(.tertiary)
-                    }
-                    .font(.system(size: 12, weight: .medium))
-                    .padding(10)
-                    .background(RoundedRectangle(cornerRadius: 8).fill(Theme.accent.opacity(0.12)))
-                }
-                .buttonStyle(.plain)
-            }
-
+            Sparkline(points: monitor.recentPower).frame(height: 40)
+            Divider()
+            apps
+            sleepRow
+            alertsRow
             Divider()
             HStack {
                 Button("Joule öffnen") { open(.now) }.keyboardShortcut("o")
@@ -88,6 +54,7 @@ struct MenuPanel: View {
         }
         .padding(16)
         .frame(width: 320)
+        .fixedSize(horizontal: false, vertical: true)
         .liveSampling(monitor)
     }
 
@@ -95,26 +62,114 @@ struct MenuPanel: View {
         HStack(alignment: .center, spacing: 12) {
             if let power = monitor.power {
                 BatteryGlyph(percent: power.percent, charging: power.source == .charging, plugged: power.source == .adapter)
-                    .frame(width: 46, height: 22)
+                    .frame(width: 42, height: 20)
                 VStack(alignment: .leading, spacing: 1) {
                     Text(Format.percent(power.percent)).font(Theme.number(20))
-                    Text(power.stateText).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
+                    Text(power.shortStateText).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
                 }
                 Spacer()
                 VStack(alignment: .trailing, spacing: 1) {
                     Text(Format.watts(power.systemWatts)).font(Theme.number(20)).foregroundStyle(Theme.accent)
-                    Text("jetzt").font(.system(size: 11)).foregroundStyle(.secondary)
+                    Text("ganzer Mac").font(.system(size: 11)).foregroundStyle(.secondary)
                 }
             } else {
                 Text("Kein Akku gefunden").font(.system(size: 13))
             }
         }
+        .frame(height: 40)
+    }
+
+    private var apps: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack {
+                Text("Apps").font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary)
+                Spacer()
+                Text("Prozessor-Energie").font(.system(size: 10.5)).foregroundStyle(.tertiary)
+            }
+            .padding(.bottom, 4)
+            VStack(spacing: 0) {
+                if monitor.liveApps.isEmpty {
+                    Text("Messe …").font(.system(size: 12)).foregroundStyle(.secondary).frame(height: Self.rowHeight)
+                } else {
+                    let maximum = max(1, monitor.liveApps.map(\.watts).max() ?? 1)
+                    ForEach(monitor.liveApps.prefix(Self.rows)) {
+                        LiveAppRow(item: $0, maximum: maximum, compact: true).frame(height: Self.rowHeight)
+                    }
+                }
+            }
+            .frame(height: Self.rowHeight * CGFloat(Self.rows), alignment: .top)
+        }
+    }
+
+    private var sleepRow: some View {
+        HStack(spacing: 8) {
+            if let blocker = monitor.blockers.first {
+                Image(systemName: "cup.and.saucer.fill").foregroundStyle(.brown)
+                Text("\(blocker.app.name) hält den Mac wach").lineLimit(1)
+                Spacer()
+                if let since = blocker.since {
+                    Text("seit \(Format.duration(Date().timeIntervalSince(since)))").foregroundStyle(.secondary)
+                }
+            } else {
+                Image(systemName: "moon.zzz").foregroundStyle(.secondary)
+                Text("Nichts hält den Mac wach").foregroundStyle(.secondary)
+                Spacer()
+            }
+        }
+        .font(.system(size: 12))
+        .frame(height: 20)
+    }
+
+    private var alertsRow: some View {
+        Button { open(.alerts) } label: {
+            HStack {
+                Image(systemName: monitor.unreadAlerts > 0 ? "bell.badge.fill" : "bell")
+                    .foregroundStyle(monitor.unreadAlerts > 0 ? Theme.accent : .secondary)
+                Text(monitor.unreadAlerts == 0 ? "Keine neuen Hinweise" : (monitor.unreadAlerts == 1 ? "1 neuer Hinweis" : "\(monitor.unreadAlerts) neue Hinweise"))
+                    .foregroundStyle(monitor.unreadAlerts > 0 ? .primary : .secondary)
+                Spacer()
+                Image(systemName: "chevron.right").foregroundStyle(.tertiary)
+            }
+            .font(.system(size: 12, weight: monitor.unreadAlerts > 0 ? .medium : .regular))
+            .padding(.horizontal, 10)
+            .frame(height: 30)
+            .background(RoundedRectangle(cornerRadius: 8).fill(monitor.unreadAlerts > 0 ? Theme.accent.opacity(0.12) : Color.primary.opacity(0.04)))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
     }
 
     private func open(_ target: Page) {
         page = target.rawValue
         openWindow(id: "main")
         NSApp.activate(ignoringOtherApps: true)
+    }
+}
+
+/// Recent system power, scaled to the data actually there (no empty half after a restart).
+struct Sparkline: View {
+    var points: [PowerPoint]
+
+    var body: some View {
+        if points.count < 2 {
+            Text("Verlauf füllt sich …").font(.system(size: 11)).foregroundStyle(.tertiary)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else {
+            let start = points.first!.date, end = points.last!.date
+            Chart(points) { point in
+                AreaMark(x: .value("Zeit", point.date), y: .value("W", point.watts))
+                    .interpolationMethod(.monotone)
+                    .foregroundStyle(LinearGradient(colors: [Theme.accent.opacity(0.35), Theme.accent.opacity(0.02)], startPoint: .top, endPoint: .bottom))
+                LineMark(x: .value("Zeit", point.date), y: .value("W", point.watts))
+                    .interpolationMethod(.monotone)
+                    .foregroundStyle(Theme.accent)
+                    .lineStyle(StrokeStyle(lineWidth: 1.5))
+            }
+            .chartXAxis(.hidden)
+            .chartYAxis(.hidden)
+            .chartXScale(domain: start...max(end, start.addingTimeInterval(60)))
+            .chartYScale(domain: 0...max(1, (points.map(\.watts).max() ?? 1) * 1.15))
+        }
     }
 }
 

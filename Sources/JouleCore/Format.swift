@@ -11,6 +11,11 @@ public enum Format {
         value < 10 ? "\(number(value, digits: 1)) W" : "\(number(value, digits: 0)) W"
     }
 
+    /// For live per-app values, where "0,0 W" would look like a broken measurement.
+    public static func smallWatts(_ value: Double) -> String {
+        value < 0.05 ? "< 0,1 W" : watts(value)
+    }
+
     /// Chooses Wh or mWh/J so small numbers stay readable.
     public static func energy(_ joules: Double) -> String {
         let wh = joules / 3600

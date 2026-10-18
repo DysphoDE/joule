@@ -9,6 +9,7 @@ enum Snapshot {
         let args = CommandLine.arguments
         guard let index = args.firstIndex(of: "--snapshot"), args.count > index + 1 else { return }
         let directory = URL(fileURLWithPath: args[index + 1], isDirectory: true)
+        Monitor.forceVisible = true
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let appearance = args.contains("--dark") ? NSAppearance(named: .darkAqua) : NSAppearance(named: .aqua)
         NSApp.appearance = appearance
@@ -21,12 +22,20 @@ enum Snapshot {
                     save(window, to: directory.appendingPathComponent("\(page.rawValue).png"))
                 }
             }
-            let panel = ImageRenderer(content: MenuPanel().environmentObject(Monitor.shared).environment(\.colorScheme, args.contains("--dark") ? .dark : .light)
-                .background(Color(nsColor: .windowBackgroundColor)))
-            panel.scale = 2
-            if let image = panel.nsImage, let tiff = image.tiffRepresentation, let rep = NSBitmapImageRep(data: tiff) {
-                try? rep.representation(using: .png, properties: [:])?.write(to: directory.appendingPathComponent("menu.png"))
-            }
+            // The real panel cannot be opened programmatically; render its content instead
+            // and check that the height does not depend on the data.
+            let dark = args.contains("--dark")
+            let host = NSHostingView(rootView: MenuPanel().environmentObject(Monitor.shared)
+                .environment(\.colorScheme, dark ? .dark : .light))
+            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 320, height: 600), styleMask: [.borderless], backing: .buffered, defer: false)
+            window.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
+            window.backgroundColor = .windowBackgroundColor
+            window.contentView = host
+            window.setContentSize(host.fittingSize)
+            window.orderFront(nil)
+            try? await Task.sleep(for: .seconds(4))
+            print("Panel-Höhe:", Int(host.fittingSize.height))
+            save(window, to: directory.appendingPathComponent("menu.png"))
             NSApp.terminate(nil)
         }
     }

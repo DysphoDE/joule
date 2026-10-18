@@ -245,6 +245,17 @@ extension Store {
         }
     }
 
+    /// Recorded average system watts per interval, oldest first.
+    public func powerSeries(since: Date) throws -> [(Date, Double)] {
+        try locked {
+            var result: [(Date, Double)] = []
+            try database.query("SELECT t, watts FROM power WHERE t > ? ORDER BY t", since.timeIntervalSince1970) { row in
+                result.append((row.date(0), row.double(1)))
+            }
+            return result
+        }
+    }
+
     /// Unplugged stretches, newest first. Sleep inside a stretch does not end it.
     public func sessions(since: Date) throws -> [DischargeSession] {
         try locked {
