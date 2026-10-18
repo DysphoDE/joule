@@ -1,7 +1,8 @@
 import AppKit
 
-// Draws five icon candidates for Joule at 1024 px and a comparison sheet.
+// Draws Joule's icon candidates at 1024 px plus a comparison sheet, or the iconset of one.
 // Usage: swift scripts/icon-variants.swift OUTPUT_DIR
+//        swift scripts/icon-variants.swift --iconset Ring DIR.iconset
 
 let S: CGFloat = 1024
 let space = CGColorSpaceCreateDeviceRGB()
@@ -249,6 +250,24 @@ func png(_ image: NSImage, pixels: Int) -> Data {
     image.draw(in: NSRect(origin: .zero, size: image.size))
     NSGraphicsContext.restoreGraphicsState()
     return rep.representation(using: .png, properties: [:])!
+}
+
+// `--iconset NAME DIR`: every macOS icon size of one variant, for iconutil.
+if CommandLine.arguments.count == 4, CommandLine.arguments[1] == "--iconset" {
+    guard let variant = variants.first(where: { $0.name == CommandLine.arguments[2] }) else {
+        fputs("Unbekannte Variante \(CommandLine.arguments[2])\n", stderr)
+        exit(1)
+    }
+    let dir = URL(fileURLWithPath: CommandLine.arguments[3], isDirectory: true)
+    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    for base in [16, 32, 128, 256, 512] {
+        for scale in [1, 2] {
+            let pixels = base * scale
+            let name = scale == 1 ? "icon_\(base)x\(base).png" : "icon_\(base)x\(base)@2x.png"
+            try png(render(variant, size: CGFloat(pixels)), pixels: pixels).write(to: dir.appendingPathComponent(name))
+        }
+    }
+    exit(0)
 }
 
 let out = URL(fileURLWithPath: CommandLine.arguments[1], isDirectory: true)

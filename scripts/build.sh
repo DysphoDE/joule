@@ -8,9 +8,10 @@ rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp .build/release/Joule "$APP/Contents/MacOS/Joule"
 cp Resources/Info.plist "$APP/Contents/Info.plist"
-if [[ ! -f Resources/AppIcon.icns ]]; then
+# The app icon is variant "Ring" from the icon drafts; rebuilt when the drawing changes.
+if [[ ! -f Resources/AppIcon.icns || scripts/icon-variants.swift -nt Resources/AppIcon.icns ]]; then
   ICONSET=$(mktemp -d)/AppIcon.iconset
-  xcrun swift scripts/make-icon.swift "$ICONSET"
+  xcrun swift scripts/icon-variants.swift --iconset Ring "$ICONSET"
   iconutil -c icns "$ICONSET" -o Resources/AppIcon.icns
 fi
 cp Resources/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"

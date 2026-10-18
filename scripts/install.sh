@@ -21,6 +21,9 @@ fi
 
 rm -rf "$TARGET"
 ditto .build/Joule.app "$TARGET"
+# Make Finder and Dock pick up a changed icon instead of a cached one.
+touch "$TARGET"
+/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f "$TARGET" 2>/dev/null || true
 if [[ "$login" == an* ]]; then
   echo "Autostart: $("$TARGET/Contents/MacOS/Joule" --login-item on)"
 fi
