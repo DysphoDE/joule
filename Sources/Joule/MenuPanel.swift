@@ -4,27 +4,20 @@ import ServiceManagement
 import SwiftUI
 
 struct MenuLabel: View {
-    @EnvironmentObject private var monitor: Monitor
+    @ObservedObject var menu: MenuState
     var style: MenuBarStyle
 
     var body: some View {
-        let power = monitor.power
         HStack(spacing: 3) {
-            Image(systemName: symbol(power))
+            Image(systemName: menu.symbol)
             switch style {
-            case .watts: Text(power.map { Format.watts($0.systemWatts) } ?? "")
-            case .percent: Text(power.map { Format.percent($0.percent) } ?? "")
-            case .both: Text(power.map { "\(Format.percent($0.percent)) · \(Format.watts($0.systemWatts))" } ?? "")
+            case .watts: Text(menu.watts)
+            case .percent: Text(menu.percent)
+            case .both: Text("\(menu.percent) · \(menu.watts)")
             case .icon: EmptyView()
             }
         }
         .monospacedDigit()
-    }
-
-    private func symbol(_ power: PowerReading?) -> String {
-        if monitor.unreadAlerts > 0 { return "bolt.badge.exclamationmark.fill" }
-        guard let power else { return "bolt.fill" }
-        return power.source == .battery ? "bolt.fill" : "bolt.horizontal.fill"
     }
 }
 

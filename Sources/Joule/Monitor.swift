@@ -26,6 +26,24 @@ struct PowerPoint: Identifiable, Hashable {
     var id: Date { date }
 }
 
+/// What the menu bar shows. Kept apart from `Monitor` so the status item only
+/// redraws when its text actually changes, not on every live update.
+@MainActor
+final class MenuState: ObservableObject {
+    @Published private(set) var watts = ""
+    @Published private(set) var percent = ""
+    @Published private(set) var symbol = "bolt.fill"
+
+    func update(power: PowerReading?, unread: Int) {
+        let newWatts = power.map { Format.watts($0.systemWatts) } ?? ""
+        let newPercent = power.map { Format.percent($0.percent) } ?? ""
+        let newSymbol = unread > 0 ? "bolt.badge.exclamationmark.fill" : (power?.source == .battery || power == nil ? "bolt.fill" : "bolt.horizontal.fill")
+        if newWatts != watts { watts = newWatts }
+        if newPercent != percent { percent = newPercent }
+        if newSymbol != symbol { symbol = newSymbol }
+    }
+}
+
 /// Records continuously and publishes live state for the UI.
 @MainActor
 final class Monitor: ObservableObject {
@@ -50,6 +68,14 @@ final class Monitor: ObservableObject {
 
     let store: Store?
     let demo: Bool
+    let menu = MenuState()
+    /// Latest values, kept off the published properties while nobody is looking,
+    /// so hidden SwiftUI views are not re-evaluated every ten seconds.
+    private var latest: PowerReading?
+    private var latestBrightness: Double?
+    private var powerBuffer: [PowerPoint] = []
+    private var unreadCount = 0
+    private var stale = false
     private let resolver = AppResolver()
     private lazy var recordAccountant = Accountant(resolver: resolver)
     private lazy var liveAccountant = Accountant(resolver: resolver)
@@ -119,6 +145,8 @@ final class Monitor: ObservableObject {
     func beginLive() {
         liveClients += 1
         guard liveTimer == nil else { return }
+        publishLive()
+        refreshDerived(force: true)
         _ = liveAccountant.ingest(.capture())
         let timer = Timer(timeInterval: Self.liveInterval, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.liveTick() }
@@ -138,8 +166,9 @@ final class Monitor: ObservableObject {
     }
 
     private func liveTick() {
-        // Locked screen or hidden window: nobody is watching, save the energy.
-        guard NSApp.windows.contains(where: { $0.isVisible && $0.occlusionState.contains(.visible) }) else { return }
+        // Locked screen, closed window, closed menu panel: nobody is watching, save the energy.
+        guard Self.someoneIsLooking else { return }
+        if stale { refreshDerived(force: true) }
         readPower()
         if demo {
             liveApps = DemoData.live().enumerated().map { LiveApp(app: $1.0, watts: $1.1, gpuShare: $1.2, background: $0 > 0) }
@@ -159,14 +188,22 @@ final class Monitor: ObservableObject {
             .map { LiveApp(app: $0.app, watts: $0.joules / interval.duration, gpuShare: min(1, $0.gpuSeconds / interval.duration), background: $0.app.key != front) }
     }
 
+    private func publishLive() {
+        latestBrightness = DisplayProbe.brightness()
+        power = latest
+        brightness = latestBrightness
+        recentPower = powerBuffer
+    }
+
     // MARK: Recording
 
     private func readPower() {
         guard let reading = PowerProbe.read() else { return }
-        power = reading
-        brightness = DisplayProbe.brightness()
-        recentPower.append(PowerPoint(date: reading.date, watts: reading.systemWatts))
-        recentPower.removeAll { reading.date.timeIntervalSince($0.date) > 30 * 60 }
+        latest = reading
+        menu.update(power: reading, unread: unreadCount)
+        powerBuffer.append(PowerPoint(date: reading.date, watts: reading.systemWatts))
+        powerBuffer.removeAll { reading.date.timeIntervalSince($0.date) > 30 * 60 }
+        if Self.someoneIsLooking { publishLive() } else { stale = true }
         if !demo {
             readings.append(reading)
             if let lastSource, lastSource != reading.source { commit() }
@@ -176,14 +213,14 @@ final class Monitor: ObservableObject {
 
     /// Closes the running interval and stores it.
     private func commit() {
-        guard let store, let last = readings.last ?? power else { return }
+        guard let store, let last = readings.last ?? latest else { return }
         let now = Date()
         let snapshot = Accountant.Snapshot.capture()
         let interval = recordAccountant.ingest(snapshot)
         let watts = Self.timeWeightedWatts(readings, from: intervalStart) ?? last.systemWatts
         let front = frontmostKey()
         let sample = PowerSample(start: intervalStart, end: now, source: last.source, percent: last.percent, watts: watts,
-                                 remainingWh: last.remainingWh, fullWh: last.fullWh, brightness: brightness, frontmost: front)
+                                 remainingWh: last.remainingWh, fullWh: last.fullWh, brightness: latestBrightness ?? DisplayProbe.brightness(), frontmost: front)
         readings.removeAll()
         intervalStart = now
         guard sample.duration > 5 else { return }
@@ -202,6 +239,14 @@ final class Monitor: ObservableObject {
                                       blockers: Dictionary(blockers.map { ($0.app, $0.reason) }, uniquingKeysWith: { a, _ in a }))
         for finding in warnings.evaluate(observation) { post(finding) }
         refreshDerived()
+    }
+
+    /// A visible window other than the status item itself (which is always "visible").
+    static var someoneIsLooking: Bool {
+        NSApp.windows.contains { window in
+            window.isVisible && window.occlusionState.contains(.visible) && window.frame.height > 60
+                && !String(describing: type(of: window)).contains("StatusBar")
+        }
     }
 
     /// Live mode reads more often; weight each reading by the time it stood for.
@@ -235,10 +280,16 @@ final class Monitor: ObservableObject {
         return "app:\(bundle)"
     }
 
-    func refreshDerived() {
+    /// Reloads summaries; skipped (and marked stale) while no window is visible.
+    func refreshDerived(force: Bool = false) {
         guard let store else { return }
+        unreadCount = (try? store.unreadAlertCount()) ?? 0
+        menu.update(power: latest, unread: unreadCount)
+        guard force || Self.someoneIsLooking else { stale = true; return }
+        stale = false
+        publishLive()
         today = try? store.report(Period.today.interval(), bucket: Period.today.bucket, batteryOnly: false)
-        unreadAlerts = (try? store.unreadAlertCount()) ?? 0
+        unreadAlerts = unreadCount
         revision += 1
     }
 
@@ -257,6 +308,8 @@ final class Monitor: ObservableObject {
     func markAlertsRead() {
         try? store?.markAlertsRead()
         unreadAlerts = 0
+        unreadCount = 0
+        menu.update(power: latest, unread: 0)
     }
 
     func mute(_ key: String) {
@@ -287,7 +340,7 @@ final class Monitor: ObservableObject {
     private func willSleep() {
         guard !demo else { return }
         commit()
-        if let power { sleepStart = (Date(), power.percent, power.source == .battery) }
+        if let latest { sleepStart = (Date(), latest.percent, latest.source == .battery) }
     }
 
     private func didWake() {

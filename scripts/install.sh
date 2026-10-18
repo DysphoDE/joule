@@ -24,5 +24,5 @@ ditto .build/Joule.app "$TARGET"
 if [[ "$login" == an* ]]; then
   echo "Autostart: $("$TARGET/Contents/MacOS/Joule" --login-item on)"
 fi
-open "$TARGET"
+open "$TARGET" --args --background
 echo "Installiert: $TARGET ($(defaults read "$TARGET/Contents/Info.plist" CFBundleShortVersionString))"

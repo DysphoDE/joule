@@ -242,16 +242,13 @@ struct LiveAppRow: View {
     }
 }
 
+/// Static on purpose: a repeating animation redraws the window every frame and costs real battery.
 struct LivePulse: View {
-    @ViewState private var on = false
     var body: some View {
         HStack(spacing: 5) {
             Circle().fill(Theme.charging).frame(width: 7, height: 7)
-                .opacity(on ? 1 : 0.35)
-                .animation(.easeInOut(duration: 1).repeatForever(), value: on)
             Text("Live").font(.system(size: 11, weight: .medium)).foregroundStyle(.secondary)
         }
-        .onAppear { on = true }
     }
 }
 

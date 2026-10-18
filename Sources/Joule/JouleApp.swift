@@ -29,7 +29,7 @@ struct JouleApp: App {
         MenuBarExtra {
             MenuPanel().environmentObject(monitor)
         } label: {
-            MenuLabel(style: menuBarStyle).environmentObject(monitor)
+            MenuLabel(menu: monitor.menu, style: menuBarStyle)
         }
         .menuBarExtraStyle(.window)
 
@@ -61,8 +61,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             Monitor.shared.start()
             Snapshot.runIfRequested()
         }
-        // Started as login item: stay quietly in the menu bar.
-        if SMAppService.mainApp.status == .enabled, ProcessInfo.processInfo.systemUptime < 120 || launchedAsLoginItem {
+        // Login item or `--background` (used by the update script): stay quietly in the menu bar.
+        let background = CommandLine.arguments.contains("--background")
+            || (SMAppService.mainApp.status == .enabled && (ProcessInfo.processInfo.systemUptime < 120 || launchedAsLoginItem))
+        if background {
             DispatchQueue.main.async { NSApp.windows.filter { $0.identifier?.rawValue.contains("main") == true }.forEach { $0.close() } }
         }
         NotificationCenter.default.addObserver(forName: NSWindow.didBecomeKeyNotification, object: nil, queue: .main) { _ in Self.updateDockIcon() }
