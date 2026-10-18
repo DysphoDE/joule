@@ -3,7 +3,7 @@
 set -euo pipefail
 cd "${0:A:h:h}"
 swift build -c release --product Joule
-APP=Joule.app
+APP=.build/Joule.app
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp .build/release/Joule "$APP/Contents/MacOS/Joule"

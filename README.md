@@ -24,10 +24,13 @@ App zieht dauerhaft viel (Vordergrund / Hintergrund), hoher Gesamtverbrauch, etw
 Braucht nur die Command Line Tools (kein Xcode):
 
 ```bash
-./scripts/build.sh      # → Joule.app
-./scripts/check.sh      # Prüfungen des Messkerns
-open Joule.app --args --demo   # zwei Wochen Beispieldaten, zeichnet nichts auf
-Joule.app/Contents/MacOS/Joule --probe   # eine Messung im Terminal
+./scripts/install.sh            # prüfen, bauen, nach /Applications installieren bzw. aktualisieren
+./scripts/install.sh --login    # dasselbe und Autostart einschalten
+./scripts/check.sh              # nur die Prüfungen des Messkerns
+open -n .build/Joule.app --args --demo        # zwei Wochen Beispieldaten, zeichnet nichts auf
+/Applications/Joule.app/Contents/MacOS/Joule --probe   # eine Messung im Terminal
 ```
+
+Ein Update behält Verlauf, Einstellungen und Autostart; Joule wird dabei kurz beendet und neu gestartet (es fehlt höchstens die laufende Minute).
 
 Daten: `~/Library/Application Support/Joule/history.sqlite` (Minutenwerte 7 Tage, Stundenwerte 90 Tage).

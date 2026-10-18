@@ -10,6 +10,10 @@ struct JouleApp: App {
     @StateObject private var monitor = Monitor.shared
     @AppStorage("menuBarStyle") private var menuBarStyle = MenuBarStyle.watts
 
+    init() {
+        LoginItemCommand.runIfRequested()
+    }
+
     var body: some Scene {
         Window("Joule", id: "main") {
             MainView()
@@ -113,5 +117,31 @@ enum Probe {
         }
         for blocker in AssertionProbe.readAll() { print("Hält wach: \(blocker.processName) – \(blocker.reason)") }
         print("Helligkeit:", DisplayProbe.brightness().map { Format.percent($0 * 100) } ?? "unbekannt")
+    }
+}
+
+/// `Joule --login-item on|off|status`: lets the install script keep the login item across updates.
+enum LoginItemCommand {
+    static func runIfRequested() {
+        let args = CommandLine.arguments
+        guard let index = args.firstIndex(of: "--login-item") else { return }
+        let service = SMAppService.mainApp
+        do {
+            switch args.count > index + 1 ? args[index + 1] : "status" {
+            case "on": try service.register()
+            case "off": try service.unregister()
+            default: break
+            }
+        } catch {
+            print("Fehler: \(error.localizedDescription)")
+            exit(1)
+        }
+        switch service.status {
+        case .enabled: print("an")
+        case .requiresApproval: print("wartet auf Freigabe in den Systemeinstellungen")
+        case .notRegistered: print("aus")
+        default: print("unbekannt")
+        }
+        exit(0)
     }
 }

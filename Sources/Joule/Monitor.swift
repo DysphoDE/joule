@@ -245,7 +245,7 @@ final class Monitor: ObservableObject {
     // MARK: Alerts
 
     private func post(_ finding: Finding) {
-        try? store?.addAlert(kind: finding.kind, app: finding.appKey, title: finding.title, body: finding.body, value: finding.value)
+        _ = try? store?.addAlert(kind: finding.kind, app: finding.appKey, title: finding.title, body: finding.body, value: finding.value)
         guard UserDefaults.standard.object(forKey: "notifications") as? Bool ?? true else { return }
         let content = UNMutableNotificationContent()
         content.title = finding.title

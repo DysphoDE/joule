@@ -359,7 +359,7 @@ private struct RecentAlerts: View {
                 }
             }
         }
-        .task(id: monitor.revision) { alerts = Array(((try? monitor.store?.alerts(limit: 3)) ?? []) ?? []) }
+        .task(id: monitor.revision) { alerts = (try? monitor.store?.alerts(limit: 3)) ?? [] }
     }
 }
 
