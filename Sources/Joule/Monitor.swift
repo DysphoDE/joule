@@ -1,0 +1,310 @@
+import AppKit
+import Combine
+import IOKit.ps
+import JouleCore
+import UserNotifications
+
+/// An app's draw right now, from the short live interval.
+struct LiveApp: Identifiable, Hashable {
+    var app: AppIdentity
+    var watts: Double
+    var gpuShare: Double
+    var background: Bool
+    var id: String { app.key }
+}
+
+struct Blocker: Identifiable, Hashable {
+    var app: AppIdentity
+    var reason: String
+    var since: Date?
+    var id: String { app.key + reason }
+}
+
+struct PowerPoint: Identifiable, Hashable {
+    var date: Date
+    var watts: Double
+    var id: Date { date }
+}
+
+/// Records continuously and publishes live state for the UI.
+@MainActor
+final class Monitor: ObservableObject {
+    static let shared = Monitor()
+
+    @Published private(set) var power: PowerReading?
+    @Published private(set) var liveApps: [LiveApp] = []
+    @Published private(set) var blockers: [Blocker] = []
+    @Published private(set) var recentPower: [PowerPoint] = []
+    @Published private(set) var today: Report?
+    @Published private(set) var unreadAlerts = 0
+    @Published private(set) var brightness: Double?
+    @Published private(set) var errorMessage: String?
+    /// Bumped after each stored interval so views can reload.
+    @Published private(set) var revision = 0
+    @Published var settings: WarningSettings {
+        didSet {
+            warnings.settings = settings
+            if let data = try? JSONEncoder().encode(settings) { UserDefaults.standard.set(data, forKey: "warningSettings") }
+        }
+    }
+
+    let store: Store?
+    let demo: Bool
+    private let resolver = AppResolver()
+    private lazy var recordAccountant = Accountant(resolver: resolver)
+    private lazy var liveAccountant = Accountant(resolver: resolver)
+    private var warnings: WarningEngine
+    private var readings: [PowerReading] = []
+    private var intervalStart = Date()
+    private var sleepStart: (date: Date, percent: Double, battery: Bool)?
+    private var timers: [Timer] = []
+    private var liveTimer: Timer?
+    private var liveClients = 0
+    private var powerSourceLoop: CFRunLoopSource?
+    private var lastSource: PowerSource?
+
+    static let recordInterval: TimeInterval = 60
+    static let powerInterval: TimeInterval = 10
+    static let liveInterval: TimeInterval = 3
+
+    private init() {
+        var loaded = WarningSettings()
+        if let data = UserDefaults.standard.data(forKey: "warningSettings"),
+           let decoded = try? JSONDecoder().decode(WarningSettings.self, from: data) { loaded = decoded }
+        settings = loaded
+        warnings = WarningEngine(settings: loaded)
+        demo = CommandLine.arguments.contains("--demo")
+        do {
+            if demo {
+                let url = FileManager.default.temporaryDirectory.appendingPathComponent("joule-demo-\(ProcessInfo.processInfo.processIdentifier).sqlite")
+                let demoStore = try Store(url: url)
+                try DemoData.fill(demoStore)
+                store = demoStore
+            } else {
+                store = try Store()
+            }
+        } catch {
+            store = nil
+            errorMessage = "Verlauf kann nicht gespeichert werden: \(error)"
+        }
+    }
+
+    func start() {
+        try? store?.prune()
+        refreshDerived()
+        readPower()
+        if !demo {
+            intervalStart = Date()
+            _ = recordAccountant.ingest(.capture())
+        }
+        schedule(every: Self.powerInterval) { $0.readPower() }
+        if !demo {
+            schedule(every: Self.recordInterval) { $0.commit() }
+            schedule(every: 3600) { try? $0.store?.prune() }
+        }
+        observeSystem()
+    }
+
+    private func schedule(every seconds: TimeInterval, _ body: @escaping (Monitor) -> Void) {
+        let timer = Timer(timeInterval: seconds, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { if let self { body(self) } }
+        }
+        timer.tolerance = seconds * 0.1
+        RunLoop.main.add(timer, forMode: .common)
+        timers.append(timer)
+    }
+
+    // MARK: Live mode while a window or the menu panel is visible
+
+    func beginLive() {
+        liveClients += 1
+        guard liveTimer == nil else { return }
+        _ = liveAccountant.ingest(.capture())
+        let timer = Timer(timeInterval: Self.liveInterval, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.liveTick() }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        liveTimer = timer
+        // A first list right away instead of after three seconds.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { [weak self] in self?.liveTick() }
+    }
+
+    func endLive() {
+        liveClients = max(0, liveClients - 1)
+        guard liveClients == 0 else { return }
+        liveTimer?.invalidate()
+        liveTimer = nil
+        liveAccountant.reset()
+    }
+
+    private func liveTick() {
+        readPower()
+        if demo {
+            liveApps = DemoData.live().enumerated().map { LiveApp(app: $1.0, watts: $1.1, gpuShare: $1.2, background: $0 > 0) }
+            if let claude = liveApps.first(where: { $0.app.name == "Claude" }) {
+                blockers = [Blocker(app: claude.app, reason: "Electron", since: Date().addingTimeInterval(-2400))]
+            }
+            return
+        }
+        let snapshot = Accountant.Snapshot.capture()
+        let pidMap = Dictionary(snapshot.processes.map { ($0.pid, $0) }, uniquingKeysWith: { a, _ in a })
+        updateBlockers(pidMap)
+        guard let interval = liveAccountant.ingest(snapshot) else { return }
+        let front = frontmostKey()
+        liveApps = interval.usages
+            .filter { $0.app.category == .app || $0.joules / interval.duration > 0.3 }
+            .prefix(8)
+            .map { LiveApp(app: $0.app, watts: $0.joules / interval.duration, gpuShare: min(1, $0.gpuSeconds / interval.duration), background: $0.app.key != front) }
+    }
+
+    // MARK: Recording
+
+    private func readPower() {
+        guard let reading = PowerProbe.read() else { return }
+        power = reading
+        brightness = DisplayProbe.brightness()
+        recentPower.append(PowerPoint(date: reading.date, watts: reading.systemWatts))
+        recentPower.removeAll { reading.date.timeIntervalSince($0.date) > 30 * 60 }
+        if !demo {
+            readings.append(reading)
+            if let lastSource, lastSource != reading.source { commit() }
+        }
+        lastSource = reading.source
+    }
+
+    /// Closes the running interval and stores it.
+    private func commit() {
+        guard let store, let last = readings.last ?? power else { return }
+        let now = Date()
+        let snapshot = Accountant.Snapshot.capture()
+        let interval = recordAccountant.ingest(snapshot)
+        let watts = Self.timeWeightedWatts(readings, from: intervalStart) ?? last.systemWatts
+        let front = frontmostKey()
+        let sample = PowerSample(start: intervalStart, end: now, source: last.source, percent: last.percent, watts: watts,
+                                 remainingWh: last.remainingWh, fullWh: last.fullWh, brightness: brightness, frontmost: front)
+        readings.removeAll()
+        intervalStart = now
+        guard sample.duration > 5 else { return }
+        do {
+            try store.record(power: sample, interval: interval)
+            errorMessage = nil
+        } catch {
+            errorMessage = "Speichern fehlgeschlagen: \(error)"
+        }
+
+        let pidMap = Dictionary(snapshot.processes.map { ($0.pid, $0) }, uniquingKeysWith: { a, _ in a })
+        updateBlockers(pidMap)
+        let observation = Observation(date: now, duration: sample.duration, source: sample.source, percent: sample.percent,
+                                      systemWatts: watts, remainingWh: last.remainingWh, fullWh: last.fullWh,
+                                      usages: interval?.usages ?? [], frontmost: front,
+                                      blockers: Dictionary(blockers.map { ($0.app, $0.reason) }, uniquingKeysWith: { a, _ in a }))
+        for finding in warnings.evaluate(observation) { post(finding) }
+        refreshDerived()
+    }
+
+    /// Live mode reads more often; weight each reading by the time it stood for.
+    static func timeWeightedWatts(_ readings: [PowerReading], from start: Date) -> Double? {
+        var previous = start, energy = 0.0, seconds = 0.0
+        for reading in readings {
+            let dt = min(Self.powerInterval * 1.5, max(0, reading.date.timeIntervalSince(previous)))
+            energy += reading.systemWatts * dt
+            seconds += dt
+            previous = reading.date
+        }
+        return seconds > 0 ? energy / seconds : nil
+    }
+
+    private func updateBlockers(_ pidMap: [pid_t: ProcessReading]) {
+        blockers = AssertionProbe.readAll().map { blocker in
+            let app: AppIdentity
+            if let process = pidMap[blocker.pid] {
+                app = resolver.identity(for: process, processes: pidMap)
+            } else {
+                app = AppIdentity(key: "system:\(blocker.processName)", name: blocker.processName, bundlePath: nil, category: .system)
+            }
+            return Blocker(app: app, reason: blocker.reason, since: blocker.since)
+        }
+        .reduce(into: [Blocker]()) { list, item in if !list.contains(where: { $0.app.key == item.app.key }) { list.append(item) } }
+    }
+
+    private func frontmostKey() -> String? {
+        guard let url = NSWorkspace.shared.frontmostApplication?.bundleURL,
+              let bundle = AppResolver.outermostBundle(url.path + "/") else { return nil }
+        return "app:\(bundle)"
+    }
+
+    func refreshDerived() {
+        guard let store else { return }
+        today = try? store.report(Period.today.interval(), bucket: Period.today.bucket, batteryOnly: false)
+        unreadAlerts = (try? store.unreadAlertCount()) ?? 0
+        revision += 1
+    }
+
+    // MARK: Alerts
+
+    private func post(_ finding: Finding) {
+        try? store?.addAlert(kind: finding.kind, app: finding.appKey, title: finding.title, body: finding.body, value: finding.value)
+        guard UserDefaults.standard.object(forKey: "notifications") as? Bool ?? true else { return }
+        let content = UNMutableNotificationContent()
+        content.title = finding.title
+        content.body = finding.body
+        content.threadIdentifier = finding.kind.rawValue
+        UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil))
+    }
+
+    func markAlertsRead() {
+        try? store?.markAlertsRead()
+        unreadAlerts = 0
+    }
+
+    func mute(_ key: String) {
+        settings.muted.insert(key)
+    }
+
+    // MARK: Sleep, wake, power source
+
+    private func observeSystem() {
+        let center = NSWorkspace.shared.notificationCenter
+        center.addObserver(forName: NSWorkspace.willSleepNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.willSleep() }
+        }
+        center.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.didWake() }
+        }
+        let context = Unmanaged.passUnretained(self).toOpaque()
+        if let source = IOPSNotificationCreateRunLoopSource({ context in
+            guard let context else { return }
+            let monitor = Unmanaged<Monitor>.fromOpaque(context).takeUnretainedValue()
+            MainActor.assumeIsolated { monitor.readPower() }
+        }, context)?.takeRetainedValue() {
+            CFRunLoopAddSource(CFRunLoopGetMain(), source, .commonModes)
+            powerSourceLoop = source
+        }
+    }
+
+    private func willSleep() {
+        guard !demo else { return }
+        commit()
+        if let power { sleepStart = (Date(), power.percent, power.source == .battery) }
+    }
+
+    private func didWake() {
+        guard !demo else { return }
+        recordAccountant.reset()
+        liveAccountant.reset()
+        warnings.reset()
+        readings.removeAll()
+        intervalStart = Date()
+        _ = recordAccountant.ingest(.capture())
+        if liveTimer != nil { _ = liveAccountant.ingest(.capture()) }
+        guard let start = sleepStart, let now = PowerProbe.read() else { return }
+        sleepStart = nil
+        let record = SleepRecord(start: start.date, end: Date(), percentBefore: start.percent, percentAfter: now.percent,
+                                 onBattery: start.battery && now.source == .battery)
+        guard record.hours > 0.05 else { return }
+        try? store?.recordSleep(record)
+        if let finding = warnings.evaluate(sleep: record) { post(finding) }
+        readPower()
+        refreshDerived()
+    }
+}
