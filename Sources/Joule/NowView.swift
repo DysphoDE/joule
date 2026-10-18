@@ -227,6 +227,7 @@ struct LiveAppRow: View {
                     Text(item.app.name).font(.system(size: compact ? 12 : 13, weight: .medium)).lineLimit(1)
                     if item.background && !compact && item.app.category == .app { Pill(text: "Hintergrund") }
                     if item.gpuShare >= 0.05 && !compact { Pill(text: "GPU \(Format.share(item.gpuShare))", color: .purple) }
+                    if item.estimated && !compact { EstimatedPill() }
                 }
                 if !compact {
                     GeometryReader { proxy in
@@ -237,7 +238,7 @@ struct LiveAppRow: View {
                 }
             }
             Spacer(minLength: 8)
-            Text(Format.smallWatts(item.watts))
+            Text((item.estimated ? "≈ " : "") + Format.smallWatts(item.watts))
                 .font(Theme.number(compact ? 12 : 13, weight: .medium))
                 .foregroundStyle(.secondary)
         }
@@ -246,6 +247,14 @@ struct LiveAppRow: View {
 }
 
 /// Static on purpose: a repeating animation redraws the window every frame and costs real battery.
+/// Marks values derived from CPU time instead of the energy counter.
+struct EstimatedPill: View {
+    var body: some View {
+        Pill(text: "geschätzt", color: .orange)
+            .help("Joule darf diesen Prozess nicht direkt messen. Die Energie ist aus seiner Prozessorzeit geschätzt (über das Systemwerkzeug ps).")
+    }
+}
+
 struct LivePulse: View {
     var body: some View {
         HStack(spacing: 5) {

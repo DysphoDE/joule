@@ -281,7 +281,8 @@ private struct MethodView: View {
             VStack(alignment: .leading, spacing: 14) {
                 item("Gesamter Mac", "bolt.fill", "Die Leistung kommt direkt aus der Akku-Elektronik (SystemLoad): alles, was der Mac gerade braucht – Display, Prozessor, Grafik, Speicher, Funk. Joule liest sie alle 10 Sekunden.")
                 item("Pro App", "square.grid.2x2.fill", "macOS zählt für jeden Prozess die Energie, die der Prozessor für ihn aufwendet. Joule liest diese Zähler jede Minute (bei offenem Fenster alle 3 Sekunden) und rechnet die Differenz. Helfer-Prozesse und Dienste wie WebKit werden der App zugeordnet, für die sie arbeiten – genau wie in der Aktivitätsanzeige.")
-                item("Display & Hardware", "display", "Was der Mac insgesamt braucht, abzüglich der gemessenen Prozesse. Darin stecken Bildschirm, Grafikchip, Speicher, WLAN und Systemprozesse, die ohne Administratorrechte nicht lesbar sind.")
+                item("Geschätzt", "questionmark.circle", "Prozesse anderer Benutzer – vor allem WindowServer, der den Bildschirm zusammensetzt – darf Joule ohne Administratorrechte nicht messen. Ihre Prozessorzeit liefert das Systemwerkzeug ps; Joule rechnet sie mit dem Verbrauch pro Prozessorsekunde der messbaren Prozesse in Energie um. Solche Werte tragen das Zeichen „≈“ und „geschätzt“.")
+                item("Display & Hardware", "display", "Was der Mac insgesamt braucht, abzüglich aller Prozesse. Darin stecken Bildschirm, Grafikchip, Speicher, WLAN und der Kernel.")
                 item("Akku-Prozent", "battery.50percent", "„3 % Akku“ heißt: Diese Energie entspricht 3 % einer vollen Ladung deines Akkus in seinem heutigen Zustand.")
                 item("Privat", "lock.fill", "Alles bleibt auf diesem Mac. Keine Netzwerkverbindung, keine Rechte nötig.")
             }

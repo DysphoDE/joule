@@ -67,10 +67,11 @@ struct AppsView: View {
                     AppIcon(app: total.app, size: 20)
                     Text(total.app.name).lineLimit(1)
                     if total.app.category != .app { Pill(text: total.app.category == .system ? "macOS" : "Tool") }
+                    if total.isEstimated { EstimatedPill() }
                 }
             }
             .width(min: 180, ideal: 220)
-            TableColumn("Energie", value: \.joules) { Text(Format.energy($0.joules)).monospacedDigit() }
+            TableColumn("Energie", value: \.joules) { Text(($0.isEstimated ? "≈ " : "") + Format.energy($0.joules)).monospacedDigit() }
                 .width(min: 64, ideal: 72)
             TableColumn("Akku", value: \.joules) { total in
                 Text(Format.percent(report?.batteryPercent(total.joules) ?? 0, digits: 1)).monospacedDigit()
@@ -140,7 +141,10 @@ struct AppDetail: View {
                     AppIcon(app: total.app, size: 48)
                     VStack(alignment: .leading, spacing: 2) {
                         Text(total.app.name).font(.system(size: 18, weight: .semibold))
-                        Text(total.app.category.label).font(.system(size: 12)).foregroundStyle(.secondary)
+                        HStack(spacing: 6) {
+                            Text(total.app.category.label).font(.system(size: 12)).foregroundStyle(.secondary)
+                            if total.isEstimated { EstimatedPill() }
+                        }
                     }
                 }
                 Grid(alignment: .leading, horizontalSpacing: 24, verticalSpacing: 12) {
@@ -216,6 +220,11 @@ struct AppDetail: View {
     }
 
     private var explanation: String {
+        if total.isEstimated {
+            var text = "Diesen Prozess darf Joule ohne Administratorrechte nicht direkt messen. Seine Prozessorzeit liest Joule über das Systemwerkzeug ps; die Energie ist daraus geschätzt – mit dem Verbrauch pro Prozessorsekunde, den die messbaren Prozesse im selben Moment hatten. Läuft er vor allem auf den schnellen Kernen, liegt der echte Wert eher etwas höher."
+            if total.app.name == "WindowServer" { text += " WindowServer setzt alles zusammen, was du auf dem Bildschirm siehst – Animationen, Videos und viele offene Fenster lassen ihn arbeiten." }
+            return text
+        }
         var text = "Gemessen wird die Energie, die der Prozessor für diese App aufwendet – inklusive Helfer-Prozesse und Dienste, die macOS ihr zuordnet."
         if total.gpuSeconds >= 1 { text += " Grafikarbeit (GPU-Zeit) steckt im Anteil „Display & Hardware“." }
         if total.wakeupsPerSecond > 100 { text += " Viele Weckrufe halten den Prozessor aus dem Stromsparmodus – das kostet auch im Leerlauf Akku." }

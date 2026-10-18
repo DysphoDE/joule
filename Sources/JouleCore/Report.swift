@@ -55,7 +55,12 @@ public struct AppTotal: Sendable, Identifiable, Hashable {
     public var idleWakeups: Double
     public var foregroundSeconds: Double
     public var activeSeconds: Double
+    /// Part of `joules` estimated from CPU time rather than measured.
+    public var estimatedJoules: Double = 0
     public var id: String { app.key }
+
+    /// Mostly estimated (WindowServer & other processes read via ps).
+    public var isEstimated: Bool { estimatedJoules > joules * 0.5 }
 
     public var wattHours: Double { joules / 3600 }
     public var averageWatts: Double { activeSeconds > 0 ? joules / activeSeconds : 0 }
@@ -172,8 +177,9 @@ extension Store {
             // Recent ranges use minute rows, older ones the hourly aggregates.
             let useMinutes = interval.start > Date().addingTimeInterval(-7 * 86400 + 3600)
             var totals: [String: AppTotal] = [:]
-            func add(_ key: String, t: Double, joules: Double, cpu: Double, gpu: Double, wakeups: Double, fg: Double, seconds: Double) {
-                let app = apps[key] ?? AppIdentity(key: key, name: key, bundlePath: nil, category: .tool)
+            func add(_ key: String, t: Double, joules: Double, cpu: Double, gpu: Double, wakeups: Double, fg: Double, seconds: Double, estimated: Double) {
+                let app = apps[key] ?? AppIdentity(key: key, name: key, bundlePath: nil,
+                                                   category: AppCategory(rawValue: String(key.prefix { $0 != ":" })) ?? .tool)
                 var total = totals[key] ?? AppTotal(app: app, joules: 0, cpuSeconds: 0, gpuSeconds: 0, idleWakeups: 0, foregroundSeconds: 0, activeSeconds: 0)
                 total.joules += joules
                 total.cpuSeconds += cpu
@@ -181,6 +187,7 @@ extension Store {
                 total.idleWakeups += wakeups
                 total.foregroundSeconds += fg
                 total.activeSeconds += seconds
+                total.estimatedJoules += estimated
                 totals[key] = total
                 let i = bucketIndex(t)
                 var b = touch(i)
@@ -189,16 +196,16 @@ extension Store {
                 buckets[i] = b
             }
             if useMinutes {
-                try database.query("SELECT t, app, joules, cpu, gpu, wakeups, fg, dt FROM usage WHERE t > ? AND t <= ? \(sourceFilter)", from, to) { row in
+                try database.query("SELECT t, app, joules, cpu, gpu, wakeups, fg, dt, estimated FROM usage WHERE t > ? AND t <= ? \(sourceFilter)", from, to) { row in
                     let dt = row.double(7)
                     add(row.string(1), t: row.double(0) - dt / 2, joules: row.double(2), cpu: row.double(3), gpu: row.double(4),
-                        wakeups: row.double(5), fg: row.int(6) == 1 ? dt : 0, seconds: dt)
+                        wakeups: row.double(5), fg: row.int(6) == 1 ? dt : 0, seconds: dt, estimated: row.double(8))
                 }
             } else {
-                try database.query("SELECT hour, app, joules, cpu, gpu, wakeups, fg_seconds, seconds FROM usage_hourly WHERE hour >= ? AND hour < ? \(sourceFilter)",
+                try database.query("SELECT hour, app, joules, cpu, gpu, wakeups, fg_seconds, seconds, estimated FROM usage_hourly WHERE hour >= ? AND hour < ? \(sourceFilter)",
                                    Int(from / 3600), Int(to / 3600) + 1) { row in
                     add(row.string(1), t: Double(row.int(0)) * 3600 + 1800, joules: row.double(2), cpu: row.double(3), gpu: row.double(4),
-                        wakeups: row.double(5), fg: row.double(6), seconds: row.double(7))
+                        wakeups: row.double(5), fg: row.double(6), seconds: row.double(7), estimated: row.double(8))
                 }
             }
             report.apps = totals.values.filter { $0.joules > 0.5 || $0.gpuSeconds > 1 }.sorted { $0.joules > $1.joules }

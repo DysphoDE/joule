@@ -9,11 +9,12 @@ Zeigt, wofür der Akku dieses MacBooks draufgeht – live, im Verlauf und pro Ap
 | Leistung des ganzen Macs | `AppleSmartBattery` → `PowerTelemetryData.SystemLoad`, alle 10 s | direkt gemessen (inkl. Display) |
 | Energie pro Prozess | `proc_pid_rusage(RUSAGE_INFO_V6).ri_energy_nj`, jede Minute (live alle 3 s) | direkt gemessen, nur Prozessor |
 | GPU-Zeit pro App | `IOAccelerator`-Clients, `accumulatedGPUTime` | gemessen (Zeit, nicht Energie) |
+| CPU-Zeit fremder Prozesse (WindowServer …) | `/bin/ps` (von macOS mit Root-Rechten ausgestattet), Energie = CPU-Zeit × J pro CPU-Sekunde der messbaren Prozesse | geschätzt, markiert mit ≈
 | Zuordnung Helfer → App | äußerstes `.app`-Bundle, sonst „verantwortlicher Prozess“ (wie Aktivitätsanzeige) | z. B. WebKit-Prozesse → Safari |
 | Ruhezustand-Blocker | `IOPMCopyAssertionsByProcess` | exakt |
 | Display & Hardware | Gesamtleistung minus gemessene Prozesse | berechneter Rest |
 
-Root-Prozesse (WindowServer, kernel_task) sind ohne Admin-Rechte nicht lesbar und landen im Rest. CPU-Zeiten aus `rusage` sind Mach-Ticks und werden in Nanosekunden umgerechnet.
+kernel_task ist auch über ps nicht sichtbar und landet im Rest „Display & Hardware“. CPU-Zeiten aus `rusage` sind Mach-Ticks und werden in Nanosekunden umgerechnet.
 
 ## Warnungen
 

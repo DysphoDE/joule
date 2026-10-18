@@ -240,7 +240,8 @@ private struct TopApps: View {
                             HStack {
                                 Text(total.app.name).font(.system(size: 12.5, weight: .medium)).lineLimit(1)
                                 Spacer()
-                                Text(Format.energy(total.joules)).font(Theme.number(12, weight: .medium))
+                                if total.isEstimated { EstimatedPill() }
+                                Text((total.isEstimated ? "≈ " : "") + Format.energy(total.joules)).font(Theme.number(12, weight: .medium))
                                 Text(Format.percent(report.batteryPercent(total.joules), digits: 1) + " Akku")
                                     .font(Theme.number(11, weight: .regular)).foregroundStyle(.secondary)
                                     .frame(width: 74, alignment: .trailing)

@@ -33,6 +33,8 @@ public struct AppUsage: Sendable {
     public var idleWakeups: Double
     /// Process name → joules, for the detail view.
     public var members: [String: Double]
+    /// Part of `joules` estimated from CPU time (processes Joule cannot read directly).
+    public var estimatedJoules: Double = 0
 }
 
 public struct Interval: Sendable {
@@ -54,17 +56,23 @@ public struct Accountant {
         public var awake: Double
         public var processes: [ProcessReading]
         public var gpu: [pid_t: UInt64]
+        /// CPU time of the processes missing from `processes`, via ps.
+        public var foreign: [pid_t: ForeignReading]
 
-        public init(date: Date, continuous: Double, awake: Double, processes: [ProcessReading], gpu: [pid_t: UInt64]) {
+        public init(date: Date, continuous: Double, awake: Double, processes: [ProcessReading], gpu: [pid_t: UInt64], foreign: [pid_t: ForeignReading] = [:]) {
             self.date = date
             self.continuous = continuous
             self.awake = awake
             self.processes = processes
             self.gpu = gpu
+            self.foreign = foreign
         }
 
         public static func capture() -> Snapshot {
-            Snapshot(date: Date(), continuous: Clock.continuous(), awake: Clock.awake(), processes: ProcessProbe.readAll(), gpu: GPUProbe.readAll())
+            let processes = ProcessProbe.readAll()
+            let readable = Set(processes.map(\.pid))
+            let foreign = ForeignProbe.readAll().filter { !readable.contains($0.key) }
+            return Snapshot(date: Date(), continuous: Clock.continuous(), awake: Clock.awake(), processes: processes, gpu: GPUProbe.readAll(), foreign: foreign)
         }
     }
 
@@ -74,6 +82,8 @@ public struct Accountant {
     private var previousByKey: [Key: ProcessReading] = [:]
     private var previousGPU: [Key: UInt64] = [:]
     private let resolver: AppResolver
+    /// Joules per CPU-second seen on readable processes; carried over quiet intervals.
+    private(set) var efficiency = 1.0
 
     public init(resolver: AppResolver = AppResolver()) {
         self.resolver = resolver
@@ -126,7 +136,35 @@ public struct Accountant {
             usage.members[now.name, default: 0] += joules
             grouped[app.key] = usage
         }
+        estimateForeign(snapshot, previous: previous, pidMap: pidMap, into: &grouped)
         return Interval(start: previous.date, end: snapshot.date, usages: grouped.values.sorted { $0.joules > $1.joules })
+    }
+
+    /// Processes Joule cannot read get energy = their CPU time × the joules per CPU-second
+    /// the readable processes needed in the same interval.
+    private mutating func estimateForeign(_ snapshot: Snapshot, previous: Snapshot, pidMap: [pid_t: ProcessReading], into grouped: inout [String: AppUsage]) {
+        let measured = grouped.values.reduce((joules: 0.0, cpu: 0.0)) { ($0.joules + $1.joules, $0.cpu + $1.cpuSeconds) }
+        // Too little activity gives a noisy ratio; keep the last one then.
+        if measured.cpu >= 0.5 { efficiency = min(5, max(0.2, measured.joules / measured.cpu)) }
+        for (pid, now) in snapshot.foreign {
+            // Same pid and same executable; a decreasing counter means the pid was reused.
+            guard let before = previous.foreign[pid], before.path == now.path, now.cpuNanos >= before.cpuNanos else { continue }
+            let cpu = Double(now.cpuNanos - before.cpuNanos) / 1e9
+            let gpuNow = snapshot.gpu[pid] ?? 0, gpuBefore = previous.gpu[pid] ?? gpuNow
+            let gpu = gpuNow >= gpuBefore ? Double(gpuNow - gpuBefore) / 1e9 : 0
+            guard cpu > 0 || gpu > 0 else { continue }
+            let joules = cpu * efficiency
+            let reading = ProcessReading(pid: pid, startTime: 0, path: now.path, name: now.name, responsiblePID: pid,
+                                         cpuNanos: now.cpuNanos, energyNanojoules: 0, idleWakeups: 0)
+            let app = resolver.identity(for: reading, processes: pidMap)
+            var usage = grouped[app.key] ?? AppUsage(app: app, joules: 0, cpuSeconds: 0, gpuSeconds: 0, idleWakeups: 0, members: [:])
+            usage.joules += joules
+            usage.estimatedJoules += joules
+            usage.cpuSeconds += cpu
+            usage.gpuSeconds += gpu
+            usage.members[now.name, default: 0] += joules
+            grouped[app.key] = usage
+        }
     }
 }
 

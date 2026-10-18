@@ -109,6 +109,16 @@ public final class Store: @unchecked Sendable {
             id INTEGER PRIMARY KEY AUTOINCREMENT, t REAL NOT NULL, kind TEXT NOT NULL, app TEXT,
             title TEXT NOT NULL, body TEXT NOT NULL, value REAL NOT NULL, read INTEGER NOT NULL DEFAULT 0);
         """)
+        // Added in 1.1: estimated share of the joules (processes read via ps).
+        for table in ["usage", "usage_hourly"] where try !columns(of: table).contains("estimated") {
+            try db.execute("ALTER TABLE \(table) ADD COLUMN estimated REAL NOT NULL DEFAULT 0")
+        }
+    }
+
+    private func columns(of table: String) throws -> Set<String> {
+        var names: Set<String> = []
+        try db.query("SELECT name FROM pragma_table_info(?)", table) { names.insert($0.string(0)) }
+        return names
     }
 
     // MARK: Writing
@@ -130,14 +140,15 @@ public final class Store: @unchecked Sendable {
                     // Tiny contributions only bloat the minute table; they still count in the hourly one.
                     let fg = usage.app.key == power.frontmost
                     if usage.joules >= 0.05 || usage.gpuSeconds > 0.01 || fg {
-                        try db.run("INSERT OR REPLACE INTO usage VALUES(?,?,?,?,?,?,?,?,?)",
-                                   t, usage.app.key, source, usage.joules, usage.cpuSeconds, usage.gpuSeconds, usage.idleWakeups, fg, dt)
+                        try db.run("INSERT OR REPLACE INTO usage(t, app, source, joules, cpu, gpu, wakeups, fg, dt, estimated) VALUES(?,?,?,?,?,?,?,?,?,?)",
+                                   t, usage.app.key, source, usage.joules, usage.cpuSeconds, usage.gpuSeconds, usage.idleWakeups, fg, dt, usage.estimatedJoules)
                     }
                     try db.run("""
-                        INSERT INTO usage_hourly VALUES(?,?,?,?,?,?,?,?,?)
+                        INSERT INTO usage_hourly(hour, app, source, joules, cpu, gpu, wakeups, fg_seconds, seconds, estimated) VALUES(?,?,?,?,?,?,?,?,?,?)
                         ON CONFLICT(hour, app, source) DO UPDATE SET joules=joules+excluded.joules, cpu=cpu+excluded.cpu,
-                        gpu=gpu+excluded.gpu, wakeups=wakeups+excluded.wakeups, fg_seconds=fg_seconds+excluded.fg_seconds, seconds=seconds+excluded.seconds
-                        """, hour, usage.app.key, source, usage.joules, usage.cpuSeconds, usage.gpuSeconds, usage.idleWakeups, fg ? dt : 0.0, dt)
+                        gpu=gpu+excluded.gpu, wakeups=wakeups+excluded.wakeups, fg_seconds=fg_seconds+excluded.fg_seconds, seconds=seconds+excluded.seconds,
+                        estimated=estimated+excluded.estimated
+                        """, hour, usage.app.key, source, usage.joules, usage.cpuSeconds, usage.gpuSeconds, usage.idleWakeups, fg ? dt : 0.0, dt, usage.estimatedJoules)
                     for (member, joules) in usage.members where joules >= 0.01 {
                         try db.run("""
                             INSERT INTO members VALUES(?,?,?,?)

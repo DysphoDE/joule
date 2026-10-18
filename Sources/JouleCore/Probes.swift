@@ -288,3 +288,56 @@ public enum Clock {
     /// Stops while asleep.
     public static func awake() -> Double { Double(ProcessProbe.machToNanos(mach_absolute_time())) / 1e9 }
 }
+
+/// CPU time of processes Joule may not inspect itself (WindowServer, coreaudiod, root daemons).
+///
+/// `/bin/ps` is installed setuid root by macOS, so it can read every process without
+/// Joule needing privileges. It reports CPU time only, no energy; `Accountant` turns
+/// that into an estimate.
+public struct ForeignReading: Sendable, Equatable {
+    public var pid: pid_t
+    public var cpuNanos: UInt64
+    public var path: String
+
+    public var name: String { (path as NSString).lastPathComponent }
+}
+
+public enum ForeignProbe {
+    public static func readAll() -> [pid_t: ForeignReading] {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/ps")
+        process.arguments = ["-A", "-o", "pid=,time=,comm="]
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = FileHandle.nullDevice
+        do { try process.run() } catch { return [:] }
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+        guard process.terminationStatus == 0 else { return [:] }
+        return parse(String(decoding: data, as: UTF8.self))
+    }
+
+    static func parse(_ output: String) -> [pid_t: ForeignReading] {
+        var result: [pid_t: ForeignReading] = [:]
+        for line in output.split(separator: "\n") {
+            let fields = line.split(separator: " ", maxSplits: 2, omittingEmptySubsequences: true)
+            guard fields.count == 3, let pid = pid_t(fields[0]), pid > 0, let seconds = cpuSeconds(String(fields[1])) else { continue }
+            result[pid] = ForeignReading(pid: pid, cpuNanos: UInt64(seconds * 1e9), path: String(fields[2]))
+        }
+        return result
+    }
+
+    /// ps TIME: "mm:ss.ss", "hh:mm:ss.ss" or "d-hh:mm:ss.ss".
+    static func cpuSeconds(_ text: String) -> Double? {
+        var days = 0.0
+        var rest = Substring(text)
+        if let dash = rest.firstIndex(of: "-") {
+            guard let d = Double(rest[..<dash]) else { return nil }
+            days = d
+            rest = rest[rest.index(after: dash)...]
+        }
+        let parts = rest.split(separator: ":").map { Double($0) }
+        guard !parts.isEmpty, parts.allSatisfy({ $0 != nil }) else { return nil }
+        return parts.reduce(0) { $0 * 60 + $1! } + days * 86400
+    }
+}

@@ -10,6 +10,8 @@ struct LiveApp: Identifiable, Hashable {
     var watts: Double
     var gpuShare: Double
     var background: Bool
+    /// Energy estimated from CPU time (process not readable by Joule itself).
+    var estimated = false
     var id: String { app.key }
 }
 
@@ -87,6 +89,9 @@ final class Monitor: ObservableObject {
     private var powerBuffer: [PowerPoint] = []
     private var unreadCount = 0
     private var stale = false
+    private let captureQueue = DispatchQueue(label: "de.jan.joule.capture", qos: .utility)
+    private var liveCaptureRunning = false
+    private var commitRunning = false
     private let resolver = AppResolver()
     private lazy var recordAccountant = Accountant(resolver: resolver)
     private lazy var liveAccountant = Accountant(resolver: resolver)
@@ -192,7 +197,16 @@ final class Monitor: ObservableObject {
             }
             return
         }
-        let snapshot = Accountant.Snapshot.capture()
+        guard !liveCaptureRunning else { return }
+        liveCaptureRunning = true
+        captureInBackground { [weak self] snapshot in
+            guard let self else { return }
+            self.liveCaptureRunning = false
+            if self.liveTimer != nil { self.applyLive(snapshot) }
+        }
+    }
+
+    private func applyLive(_ snapshot: Accountant.Snapshot) {
         let pidMap = Dictionary(snapshot.processes.map { ($0.pid, $0) }, uniquingKeysWith: { a, _ in a })
         updateBlockers(pidMap)
         guard let interval = liveAccountant.ingest(snapshot) else { return }
@@ -204,7 +218,8 @@ final class Monitor: ObservableObject {
         liveApps = interval.usages
             .filter { $0.app.category == .app || $0.joules / interval.duration > 0.3 }
             .prefix(8)
-            .map { LiveApp(app: $0.app, watts: $0.joules / interval.duration, gpuShare: min(1, $0.gpuSeconds / interval.duration), background: $0.app.key != front) }
+            .map { LiveApp(app: $0.app, watts: $0.joules / interval.duration, gpuShare: min(1, $0.gpuSeconds / interval.duration),
+                          background: $0.app.key != front, estimated: $0.estimatedJoules > $0.joules * 0.5) }
     }
 
     private func publishLive() {
@@ -231,17 +246,39 @@ final class Monitor: ObservableObject {
     }
 
     /// Closes the running interval and stores it.
-    private func commit() {
-        guard let store, let last = readings.last ?? latest else { return }
+    /// Reading every process (and running ps) takes a few dozen ms, so it happens off the main thread.
+    private func captureInBackground(_ done: @escaping @MainActor (Accountant.Snapshot) -> Void) {
+        captureQueue.async {
+            let snapshot = Accountant.Snapshot.capture()
+            DispatchQueue.main.async { MainActor.assumeIsolated { done(snapshot) } }
+        }
+    }
+
+    /// Closes the running interval and stores it. `sync` is for going to sleep, where there is no later.
+    private func commit(sync: Bool = false) {
+        guard store != nil, let last = readings.last ?? latest, !commitRunning else { return }
         let now = Date()
-        let snapshot = Accountant.Snapshot.capture()
-        let interval = recordAccountant.ingest(snapshot)
-        let watts = Self.timeWeightedWatts(readings, from: intervalStart) ?? last.systemWatts
-        let front = frontmostKey()
-        let sample = PowerSample(start: intervalStart, end: now, source: last.source, percent: last.percent, watts: watts,
-                                 remainingWh: last.remainingWh, fullWh: last.fullWh, brightness: latestBrightness ?? DisplayProbe.brightness(), frontmost: front)
+        let taken = readings, start = intervalStart
         readings.removeAll()
         intervalStart = now
+        if sync {
+            finishCommit(.capture(), readings: taken, start: start, end: now, last: last)
+        } else {
+            commitRunning = true
+            captureInBackground { [weak self] snapshot in
+                self?.commitRunning = false
+                self?.finishCommit(snapshot, readings: taken, start: start, end: now, last: last)
+            }
+        }
+    }
+
+    private func finishCommit(_ snapshot: Accountant.Snapshot, readings: [PowerReading], start: Date, end now: Date, last: PowerReading) {
+        guard let store else { return }
+        let interval = recordAccountant.ingest(snapshot)
+        let watts = Self.timeWeightedWatts(readings, from: start) ?? last.systemWatts
+        let front = frontmostKey()
+        let sample = PowerSample(start: start, end: now, source: last.source, percent: last.percent, watts: watts,
+                                 remainingWh: last.remainingWh, fullWh: last.fullWh, brightness: latestBrightness ?? DisplayProbe.brightness(), frontmost: front)
         guard sample.duration > 5 else { return }
         do {
             try store.record(power: sample, interval: interval)
@@ -371,7 +408,7 @@ final class Monitor: ObservableObject {
 
     private func willSleep() {
         guard !demo else { return }
-        commit()
+        commit(sync: true)
         if let latest { sleepStart = (Date(), latest.percent, latest.source == .battery) }
     }
 

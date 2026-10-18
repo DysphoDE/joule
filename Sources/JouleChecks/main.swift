@@ -211,9 +211,75 @@ struct StoreTests {
     }
 }
 
+struct EstimateTests {
+    func psTimeFormats() throws {
+        expect(ForeignProbe.cpuSeconds("27:24.68") == 1644.68)
+        expect(ForeignProbe.cpuSeconds("1:02:03.50") == 3723.5)
+        expect(ForeignProbe.cpuSeconds("2-01:00:00.00") == 2 * 86400 + 3600)
+        expect(ForeignProbe.cpuSeconds("abc") == nil)
+        let parsed = ForeignProbe.parse("  412   27:24.68 /System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer\n  88 0:01.00 /usr/sbin/my daemon\n")
+        expect(parsed[412]?.name == "WindowServer")
+        expect(parsed[88]?.path == "/usr/sbin/my daemon")
+    }
+
+    func foreignProcessGetsEstimatedEnergy() throws {
+        let ws = "/System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer"
+        let app = "/Applications/A.app/Contents/MacOS/A"
+        var accountant = Accountant(resolver: resolver)
+        var first = snapshot(0, [process(5, path: app)], gpu: [412: 0])
+        first.foreign = [412: ForeignReading(pid: 412, cpuNanos: 10_000_000_000, path: ws)]
+        _ = accountant.ingest(first)
+        // The readable app needs 2 J per CPU-second; WindowServer used 3 CPU-seconds.
+        var second = snapshot(60, [process(5, path: app, cpu: 4_000_000_000, energy: 8_000_000_000)], gpu: [412: 5_000_000_000])
+        second.foreign = [412: ForeignReading(pid: 412, cpuNanos: 13_000_000_000, path: ws)]
+        let interval = try require(accountant.ingest(second))
+        let windowServer = try require(interval.usages.first { $0.app.name == "WindowServer" })
+        expect(windowServer.joules == 6)
+        expect(windowServer.estimatedJoules == 6)
+        expect(windowServer.gpuSeconds == 5)
+        expect(windowServer.app.category == .system)
+        expect(interval.measuredJoules == 14)
+    }
+
+    func reusedForeignPidIsIgnored() throws {
+        var accountant = Accountant(resolver: resolver)
+        var first = snapshot(0, [])
+        first.foreign = [9: ForeignReading(pid: 9, cpuNanos: 5_000_000_000, path: "/usr/libexec/a")]
+        _ = accountant.ingest(first)
+        var second = snapshot(60, [])
+        second.foreign = [9: ForeignReading(pid: 9, cpuNanos: 9_000_000_000, path: "/usr/libexec/b")]
+        try expect(try require(accountant.ingest(second)).usages.isEmpty)
+    }
+
+    func oldDatabaseIsMigratedWithoutLosingRows() throws {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("joule-migrate-\(UUID().uuidString).sqlite")
+        let old = try SQLiteDatabase(path: url.path)
+        try old.execute("""
+            CREATE TABLE usage(t REAL NOT NULL, app TEXT NOT NULL, source TEXT NOT NULL, joules REAL NOT NULL, cpu REAL NOT NULL, gpu REAL NOT NULL, wakeups REAL NOT NULL, fg INTEGER NOT NULL, dt REAL NOT NULL, PRIMARY KEY(t, app)) WITHOUT ROWID;
+            CREATE TABLE usage_hourly(hour INTEGER NOT NULL, app TEXT NOT NULL, source TEXT NOT NULL, joules REAL NOT NULL, cpu REAL NOT NULL, gpu REAL NOT NULL, wakeups REAL NOT NULL, fg_seconds REAL NOT NULL, seconds REAL NOT NULL, PRIMARY KEY(hour, app, source)) WITHOUT ROWID;
+            INSERT INTO usage VALUES(\(Date().timeIntervalSince1970 - 60), 'app:/A.app', 'battery', 42, 1, 0, 0, 1, 60);
+            """)
+        let store = try Store(url: url)
+        let report = try store.report(DateInterval(start: Date().addingTimeInterval(-3600), end: Date()), bucket: 900, batteryOnly: false)
+        expect(report.apps.first?.joules == 42)
+        expect(report.apps.first?.isEstimated == false)
+        // A new interval with an estimated part can be written into the migrated tables.
+        let ws = AppIdentity(key: "system:WindowServer", name: "WindowServer", bundlePath: nil, category: .system)
+        var usage = AppUsage(app: ws, joules: 30, cpuSeconds: 10, gpuSeconds: 2, idleWakeups: 0, members: ["WindowServer": 30])
+        usage.estimatedJoules = 30
+        let end = Date(), start = end.addingTimeInterval(-60)
+        try store.record(power: PowerSample(start: start, end: end, source: .battery, percent: 50, watts: 10, remainingWh: 50, fullWh: 100, brightness: nil, frontmost: nil),
+                         interval: Interval(start: start, end: end, usages: [usage]))
+        let after = try store.report(DateInterval(start: Date().addingTimeInterval(-3600), end: Date().addingTimeInterval(1)), bucket: 900, batteryOnly: false)
+        expect(after.apps.first { $0.app.name == "WindowServer" }?.isEstimated == true)
+        expect(after.breakdown.services == 30)
+    }
+}
+
 // The Command Line Tools ship neither XCTest nor the Swift Testing macros, so: a tiny harness.
 nonisolated(unsafe) var failures: [String] = []
 nonisolated(unsafe) var current = ""
+nonisolated(unsafe) var passedCount = 0
 
 func expect(_ condition: @autoclosure () throws -> Bool, file: String = #fileID, line: Int = #line) rethrows {
     if try !condition() { failures.append("\(current) – \(file):\(line)") }
@@ -230,6 +296,7 @@ func run(_ name: String, _ body: () throws -> Void) {
     current = name
     let before = failures.count
     do { try body() } catch is RequirementFailed {} catch { failures.append("\(name) – \(error)") }
+    if failures.count == before { passedCount += 1 }
     print(failures.count == before ? "✓ \(name)" : "✗ \(name)")
 }
 
@@ -250,5 +317,9 @@ run("WarningTests.sleepDrain") { try WarningTests().sleepDrain() }
 run("StoreTests.reportSplitsAppsServicesAndHardware") { try StoreTests().reportSplitsAppsServicesAndHardware() }
 run("StoreTests.noticesRoundTrip") { try StoreTests().noticesRoundTrip() }
 run("StoreTests.demoDataProducesAPlausibleWeek") { try StoreTests().demoDataProducesAPlausibleWeek() }
+run("EstimateTests.psTimeFormats") { try EstimateTests().psTimeFormats() }
+run("EstimateTests.foreignProcessGetsEstimatedEnergy") { try EstimateTests().foreignProcessGetsEstimatedEnergy() }
+run("EstimateTests.reusedForeignPidIsIgnored") { try EstimateTests().reusedForeignPidIsIgnored() }
+run("EstimateTests.oldDatabaseIsMigratedWithoutLosingRows") { try EstimateTests().oldDatabaseIsMigratedWithoutLosingRows() }
 print("")
-if failures.isEmpty { print("17 Prüfungen bestanden.") } else { failures.forEach { print("FEHLER", $0) }; exit(1) }
+if failures.isEmpty { print("\(passedCount) Prüfungen bestanden.") } else { failures.forEach { print("FEHLER", $0) }; exit(1) }
