@@ -207,7 +207,7 @@ let variants: [Variant] = [
             ctx.restoreGState()
             ctx.saveGState()
             ctx.addPath(drop); ctx.clip()
-            ctx.drawRadialGradient(gradient([(0xFFE07A, 1, 0), (0xFFA02E, 1, 0.55), (0xE9551B, 1, 1)]), startCenter: CGPoint(x: 440, y: 560), startRadius: 10,
+            ctx.drawRadialGradient(gradient([(0xFFE07A, 1, 0), (0xFFA02E, 1, 0.55), (0xE9551B, 1, 1)]), startCenter: CGPoint(x: 440, y: 560), startRadius: 0,
                                    endCenter: c, endRadius: 330, options: [.drawsAfterEndLocation])
             // Soft specular highlight, upper left, following the curve.
             ctx.saveGState()
