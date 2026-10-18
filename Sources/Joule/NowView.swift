@@ -15,6 +15,12 @@ struct NowView: View {
                     PowerCard()
                 }
                 .fixedSize(horizontal: false, vertical: true)
+                if let session = monitor.currentSession {
+                    Card {
+                        SessionBreakdownView(breakdown: session, fullWh: monitor.power?.fullWh ?? 0,
+                                             blockers: monitor.blockers.filter { $0.app.category == .app }.map(\.app.name))
+                    }
+                }
                 TodayStrip()
                 HStack(alignment: .top, spacing: 16) {
                     LiveAppsCard()

@@ -67,6 +67,8 @@ final class Monitor: ObservableObject {
     @Published private(set) var blockers: [Blocker] = []
     @Published private(set) var recentPower: [PowerPoint] = []
     @Published private(set) var today: Report?
+    /// The running (or last) discharge session split into what used the battery.
+    @Published private(set) var currentSession: SessionBreakdown?
     @Published private(set) var unreadAlerts = 0
     @Published private(set) var brightness: Double?
     @Published private(set) var errorMessage: String?
@@ -348,6 +350,11 @@ final class Monitor: ObservableObject {
         stale = false
         publishLive()
         today = try? store.report(Period.today.interval(), bucket: Period.today.bucket, batteryOnly: false)
+        if let session = (try? store.sessions(since: Date().addingTimeInterval(-3 * 86400)))?.first {
+            currentSession = try? store.breakdown(of: session)
+        } else {
+            currentSession = nil
+        }
         unreadAlerts = unreadCount
         revision += 1
     }

@@ -276,6 +276,86 @@ struct EstimateTests {
     }
 }
 
+struct SessionShareTests {
+    func sharesAddUpToTheLostPercentage() throws {
+        let store = try Store(url: FileManager.default.temporaryDirectory.appendingPathComponent("joule-session-\(UUID().uuidString).sqlite"))
+        let safari = AppIdentity(key: "app:/Applications/Safari.app", name: "Safari", bundlePath: "/Applications/Safari.app", category: .app)
+        let ws = AppIdentity(key: "system:WindowServer", name: "WindowServer", bundlePath: nil, category: .system)
+        let base = Date().addingTimeInterval(-3 * 3600)
+        // Plugged in first, then 10 awake minutes on battery from 100 % to 90 %, 10 W each minute.
+        try store.record(power: PowerSample(start: base.addingTimeInterval(-60), end: base, source: .adapter, percent: 100, watts: 10,
+                                            remainingWh: 100, fullWh: 100, brightness: nil, frontmost: nil), interval: nil)
+        for i in 0..<10 {
+            let start = base.addingTimeInterval(Double(i) * 60), end = start.addingTimeInterval(60)
+            var windowServer = AppUsage(app: ws, joules: 60, cpuSeconds: 60, gpuSeconds: 0, idleWakeups: 0, members: [:])
+            windowServer.estimatedJoules = 60
+            let usages = [AppUsage(app: safari, joules: 180, cpuSeconds: 60, gpuSeconds: 0, idleWakeups: 0, members: [:]), windowServer]
+            try store.record(power: PowerSample(start: start, end: end, source: .battery, percent: 99 - Double(i), watts: 10,
+                                                remainingWh: 90, fullWh: 100, brightness: nil, frontmost: safari.key),
+                             interval: Interval(start: start, end: end, usages: usages))
+        }
+        // Then two hours asleep losing 3 %, and five more awake minutes to 85 %.
+        let sleepStart = base.addingTimeInterval(600), wake = sleepStart.addingTimeInterval(7200)
+        try store.recordSleep(SleepRecord(start: sleepStart, end: wake, percentBefore: 90, percentAfter: 87, onBattery: true))
+        for i in 0..<5 {
+            let start = wake.addingTimeInterval(Double(i) * 60), end = start.addingTimeInterval(60)
+            try store.record(power: PowerSample(start: start, end: end, source: .battery, percent: 87 - Double(i) * 0.5, watts: 10,
+                                                remainingWh: 87, fullWh: 100, brightness: nil, frontmost: nil),
+                             interval: Interval(start: start, end: end, usages: [AppUsage(app: safari, joules: 180, cpuSeconds: 60, gpuSeconds: 0, idleWakeups: 0, members: [:])]))
+        }
+        let session = try require(try store.sessions(since: base.addingTimeInterval(-3600)).first)
+        let breakdown = try store.breakdown(of: session)
+        let sum = breakdown.entries.reduce(0) { $0 + $1.percent }
+        expect(abs(sum - breakdown.percentUsed) < 0.001)
+        expect(breakdown.entries.first { $0.kind == .sleep }?.percent == 3)
+        // 15 awake minutes × 600 J = 9000 J; Safari 2700 J = 30 % of the awake drain.
+        let awake = breakdown.percentUsed - 3
+        expect(abs((breakdown.entries.first { $0.name == "Safari" }?.percent ?? 0) - awake * 2700 / 9000) < 0.001)
+        expect(breakdown.entries.first { $0.name == "WindowServer" }?.estimated == true)
+        expect(breakdown.entries.contains { $0.kind == .hardware })
+        expect(!breakdown.startsAtRecording)
+        expect(breakdown.sleepHours == 2)
+    }
+}
+
+struct NarrativeTests {
+    func session(_ used: Double, awake: Double = 3600, watts: Double = 10) -> DischargeSession {
+        DischargeSession(start: Date(timeIntervalSince1970: 0), end: Date(timeIntervalSince1970: awake), percentStart: 100, percentEnd: 100 - used,
+                         joules: watts * awake, awakeSeconds: awake, ongoing: true)
+    }
+
+    func explainsAScreenDominatedLockedSession() throws {
+        let chat = AppIdentity(key: "app:/C.app", name: "ChatGPT", bundlePath: nil, category: .app)
+        var breakdown = SessionBreakdown(session: session(11), entries: [
+            ShareEntry(kind: .hardware, name: "Display & Hardware", app: nil, joules: 0, percent: 10, estimated: false),
+            ShareEntry(kind: .app, name: "ChatGPT", app: chat, joules: 0, percent: 0.4, estimated: false),
+            ShareEntry(kind: .others, name: "Weitere Apps & Dienste", app: nil, joules: 0, percent: 0.6, estimated: false),
+        ], sleepHours: 0, startsAtRecording: true, unrecordedSeconds: 0)
+        breakdown.lockedSeconds = 55 * 60
+        breakdown.lockedPercent = 7
+        breakdown.averageBrightness = 0.8
+        let text = Narrative.explain(breakdown, fullWh: 99, blockers: ["Claude"]).joined(separator: " ")
+        expect(text.contains("hat dein Mac selbst gebraucht"))
+        expect(text.contains("kaum eine Rolle"))
+        expect(text.contains("ChatGPT (0,4 %)"))
+        expect(text.contains("gesperrt"))
+        expect(text.contains("Claude"))
+        expect(text.contains("Helligkeit"))
+        expect(text.contains("volle Ladung"))
+    }
+
+    func namesTheAppWhenOneDominates() throws {
+        let steam = AppIdentity(key: "app:/S.app", name: "Steam", bundlePath: nil, category: .app)
+        let breakdown = SessionBreakdown(session: session(20), entries: [
+            ShareEntry(kind: .app, name: "Steam", app: steam, joules: 0, percent: 12, estimated: false),
+            ShareEntry(kind: .hardware, name: "Display & Hardware", app: nil, joules: 0, percent: 8, estimated: false),
+        ], sleepHours: 0, startsAtRecording: false, unrecordedSeconds: 0)
+        let first = try require(Narrative.explain(breakdown, fullWh: 99).first)
+        expect(first == "Am meisten hat Steam verbraucht: 12 % – mehr als die Hälfte des Verlusts.")
+        expect(Narrative.explain(SessionBreakdown(session: session(0.4), entries: [], sleepHours: 0, startsAtRecording: false, unrecordedSeconds: 0), fullWh: 99).isEmpty)
+    }
+}
+
 // The Command Line Tools ship neither XCTest nor the Swift Testing macros, so: a tiny harness.
 nonisolated(unsafe) var failures: [String] = []
 nonisolated(unsafe) var current = ""
@@ -321,5 +401,8 @@ run("EstimateTests.psTimeFormats") { try EstimateTests().psTimeFormats() }
 run("EstimateTests.foreignProcessGetsEstimatedEnergy") { try EstimateTests().foreignProcessGetsEstimatedEnergy() }
 run("EstimateTests.reusedForeignPidIsIgnored") { try EstimateTests().reusedForeignPidIsIgnored() }
 run("EstimateTests.oldDatabaseIsMigratedWithoutLosingRows") { try EstimateTests().oldDatabaseIsMigratedWithoutLosingRows() }
+run("SessionShareTests.sharesAddUpToTheLostPercentage") { try SessionShareTests().sharesAddUpToTheLostPercentage() }
+run("NarrativeTests.explainsAScreenDominatedLockedSession") { try NarrativeTests().explainsAScreenDominatedLockedSession() }
+run("NarrativeTests.namesTheAppWhenOneDominates") { try NarrativeTests().namesTheAppWhenOneDominates() }
 print("")
 if failures.isEmpty { print("\(passedCount) Prüfungen bestanden.") } else { failures.forEach { print("FEHLER", $0) }; exit(1) }

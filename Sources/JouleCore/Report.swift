@@ -327,3 +327,118 @@ extension Store {
         }
     }
 }
+
+/// One line of "where did the X % go".
+public struct ShareEntry: Sendable, Identifiable, Hashable {
+    public enum Kind: Sendable, Hashable { case app, service, others, hardware, sleep }
+
+    public var kind: Kind
+    public var name: String
+    public var app: AppIdentity?
+    public var joules: Double
+    /// Percentage points of battery this entry accounts for.
+    public var percent: Double
+    public var estimated: Bool
+    public var id: String { app?.key ?? name }
+}
+
+/// Splits the battery percentage lost in one session over what used it.
+public struct SessionBreakdown: Sendable, Hashable, Identifiable {
+    public var session: DischargeSession
+    public var id: Date { session.start }
+    public var entries: [ShareEntry]
+    public var sleepHours: Double
+    /// Joule started recording during this session, so its true start is unknown.
+    public var startsAtRecording: Bool
+    /// Awake time on battery for which no measurement exists (Joule was not running).
+    public var unrecordedSeconds: Double
+    /// Awake on battery with the login window in front: screen locked, Mac not asleep.
+    public var lockedSeconds: Double = 0
+    public var lockedPercent: Double = 0
+    public var averageBrightness: Double?
+
+    public var percentUsed: Double { session.percentUsed }
+}
+
+extension Store {
+    /// Awake drain is shared out by measured energy; sleep drain is its own entry,
+    /// so the entries add up to the percentage actually lost.
+    public func breakdown(of session: DischargeSession, topCount: Int = 7) throws -> SessionBreakdown {
+        let interval = DateInterval(start: session.start, end: max(session.end, session.start.addingTimeInterval(1)))
+        let report = try self.report(interval, bucket: 3600, batteryOnly: true)
+        var sleepLost = 0.0, sleepSeconds = 0.0
+        for sleep in report.sleeps where sleep.onBattery && sleep.start >= session.start.addingTimeInterval(-60) {
+            sleepLost += sleep.percentLost
+            sleepSeconds += sleep.end.timeIntervalSince(sleep.start)
+        }
+        sleepLost = min(sleepLost, session.percentUsed)
+        let awake = session.percentUsed - sleepLost
+        let total = max(report.totalJoules, 0.001)
+        func percent(_ joules: Double) -> Double { awake * joules / total }
+
+        var entries: [ShareEntry] = []
+        let ranked = report.apps.sorted { $0.joules > $1.joules }
+        for item in ranked.prefix(topCount) where item.joules > 0 {
+            entries.append(ShareEntry(kind: item.app.category == .app ? .app : .service, name: item.app.name, app: item.app,
+                                      joules: item.joules, percent: percent(item.joules), estimated: item.isEstimated))
+        }
+        // Everything measured but not listed, including the tiny apps the report leaves out.
+        let rest = report.breakdown.apps + report.breakdown.services - entries.reduce(0) { $0 + $1.joules }
+        if rest > 0.5 {
+            entries.append(ShareEntry(kind: .others, name: "Weitere Apps & Dienste", app: nil, joules: rest, percent: percent(rest), estimated: false))
+        }
+        if report.breakdown.hardware > 0 {
+            entries.append(ShareEntry(kind: .hardware, name: "Display & Hardware", app: nil, joules: report.breakdown.hardware,
+                                      percent: percent(report.breakdown.hardware), estimated: false))
+        }
+        if sleepLost > 0 {
+            entries.append(ShareEntry(kind: .sleep, name: "Ruhezustand", app: nil, joules: 0, percent: sleepLost, estimated: false))
+        }
+        // Rows that would read "0,0 %" only add noise; fold them into the rest.
+        let tiny = entries.filter { ($0.kind == .app || $0.kind == .service) && $0.percent < 0.05 }
+        if !tiny.isEmpty {
+            entries.removeAll { tiny.contains($0) }
+            let joules = tiny.reduce(0) { $0 + $1.joules }, share = tiny.reduce(0) { $0 + $1.percent }
+            if let index = entries.firstIndex(where: { $0.kind == .others }) {
+                entries[index].joules += joules
+                entries[index].percent += share
+            } else {
+                entries.append(ShareEntry(kind: .others, name: "Weitere Apps & Dienste", app: nil, joules: joules, percent: share, estimated: false))
+            }
+        }
+        entries.sort { $0.percent > $1.percent }
+
+        var lockedSeconds = 0.0, lockedJoules = 0.0, brightnessSum = 0.0, brightnessSeconds = 0.0
+        try locked {
+            try database.query("SELECT dt, watts, front, brightness FROM power WHERE source='battery' AND t > ? AND t <= ?",
+                               interval.start.timeIntervalSince1970, interval.end.timeIntervalSince1970) { row in
+                let dt = row.double(0)
+                if row.optionalString(2) == Self.loginWindowKey {
+                    lockedSeconds += dt
+                    lockedJoules += row.double(1) * dt
+                }
+                if let brightness = row.optionalDouble(3) {
+                    brightnessSum += brightness * dt
+                    brightnessSeconds += dt
+                }
+            }
+        }
+
+        let earlier: Bool = try locked {
+            var found = false
+            try database.query("SELECT 1 FROM power WHERE t <= ? AND t > ? LIMIT 1",
+                               session.start.timeIntervalSince1970, session.start.timeIntervalSince1970 - 12 * 3600) { _ in found = true }
+            return found
+        }
+        let wall = session.end.timeIntervalSince(session.start)
+        var result = SessionBreakdown(session: session, entries: entries, sleepHours: sleepSeconds / 3600, startsAtRecording: !earlier,
+                                      unrecordedSeconds: max(0, wall - sleepSeconds - report.recordedSeconds))
+        result.lockedSeconds = lockedSeconds
+        result.lockedPercent = percent(lockedJoules)
+        result.averageBrightness = brightnessSeconds > 0 ? brightnessSum / brightnessSeconds : nil
+        return result
+    }
+
+    /// Frontmost "app" while the screen is locked.
+    public static let loginWindowKey = "app:/System/Library/CoreServices/loginwindow.app"
+}

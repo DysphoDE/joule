@@ -6,6 +6,7 @@ struct BatteryView: View {
     @EnvironmentObject private var monitor: Monitor
     @ViewState private var sessions: [DischargeSession] = []
     @ViewState private var sleeps: [SleepRecord] = []
+    @ViewState private var selected: SessionBreakdown?
 
     var body: some View {
         ScrollView {
@@ -15,11 +16,21 @@ struct BatteryView: View {
                     SleepCard(sleeps: sleeps, threshold: monitor.settings.sleepPercentPerHour)
                 }
                 .fixedSize(horizontal: false, vertical: true)
-                SessionsCard(sessions: sessions, fullWh: monitor.power?.fullWh ?? 0)
+                SessionsCard(sessions: sessions, fullWh: monitor.power?.fullWh ?? 0) { session in
+                    selected = try? monitor.store?.breakdown(of: session)
+                }
             }
             .padding(24)
             .frame(maxWidth: 1240)
             .frame(maxWidth: .infinity)
+        }
+        .sheet(item: $selected) { breakdown in
+            VStack(alignment: .trailing, spacing: 16) {
+                SessionBreakdownView(breakdown: breakdown, maxRows: 14, fullWh: monitor.power?.fullWh ?? 0)
+                Button("Fertig") { selected = nil }.keyboardShortcut(.defaultAction)
+            }
+            .padding(24)
+            .frame(width: 620)
         }
         .task(id: monitor.revision) {
             sessions = (try? monitor.store?.sessions(since: Date().addingTimeInterval(-14 * 86400))) ?? []
@@ -112,6 +123,7 @@ private struct SleepCard: View {
 private struct SessionsCard: View {
     var sessions: [DischargeSession]
     var fullWh: Double
+    var open: (DischargeSession) -> Void
 
     var body: some View {
         Card {
@@ -122,7 +134,7 @@ private struct SessionsCard: View {
                 } else {
                     Grid(alignment: .leading, horizontalSpacing: 18, verticalSpacing: 10) {
                         GridRow {
-                            Text("Zeitraum"); Text("Akku"); Text(""); Text("Wach"); Text("Ø Leistung"); Text("Hochgerechnet")
+                            Text("Zeitraum"); Text("Akku"); Text(""); Text("Wach"); Text("Ø Leistung"); Text("Hochgerechnet"); Text("")
                         }
                         .font(.system(size: 11, weight: .medium)).foregroundStyle(.secondary)
                         Divider().gridCellUnsizedAxes(.horizontal)
@@ -138,6 +150,8 @@ private struct SessionsCard: View {
                                 Text(Format.watts(session.averageWatts)).monospacedDigit()
                                 Text(session.averageWatts > 0 && fullWh > 0 ? "\(Format.duration(fullWh / session.averageWatts * 3600, short: true)) pro Ladung" : "–")
                                     .monospacedDigit().foregroundStyle(.secondary)
+                                Button("Wohin?") { open(session) }.buttonStyle(.link)
+                                    .help("Zeigt, was die Prozente dieser Sitzung verbraucht hat")
                             }
                             .font(.system(size: 12.5))
                         }
