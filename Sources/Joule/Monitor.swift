@@ -138,6 +138,8 @@ final class Monitor: ObservableObject {
     }
 
     private func liveTick() {
+        // Locked screen or hidden window: nobody is watching, save the energy.
+        guard NSApp.windows.contains(where: { $0.isVisible && $0.occlusionState.contains(.visible) }) else { return }
         readPower()
         if demo {
             liveApps = DemoData.live().enumerated().map { LiveApp(app: $1.0, watts: $1.1, gpuShare: $1.2, background: $0 > 0) }
