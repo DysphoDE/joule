@@ -4,58 +4,170 @@ import SwiftUI
 
 struct HistoryView: View {
     @EnvironmentObject private var monitor: Monitor
-    var period: Period
-    var batteryOnly: Bool
+    @AppStorage("period") private var periodRaw = Period.week.rawValue
+    @AppStorage("batteryOnly") private var batteryOnly = false
     @ViewState private var report: Report?
+    @ViewState private var days: [DayStrip] = []
+
+    private var period: Period { Period(rawValue: periodRaw) ?? .week }
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                if let report {
-                    if report.isEmpty {
-                        Card { EmptyNote(text: batteryOnly ? "In diesem Zeitraum lief der Mac nicht auf Akku." : "Für diesen Zeitraum gibt es noch keine Aufzeichnung.") }
+        PageScroll {
+            PageHeader(title: "Verlauf", tag: monitor.demo ? "Beispieldaten" : nil) {
+                Picker("Zeitraum", selection: $periodRaw) {
+                    ForEach(Period.allCases) { Text($0.title).tag($0.rawValue) }
+                }
+                .pickerStyle(.segmented).labelsHidden().fixedSize()
+                Toggle("Nur Akkubetrieb", isOn: $batteryOnly).toggleStyle(.checkbox).font(.system(size: 12))
+            }
+            if let report {
+                if report.isEmpty {
+                    Card { EmptyNote(text: batteryOnly ? "In diesem Zeitraum lief der Mac nicht auf Akku." : "Für diesen Zeitraum gibt es noch keine Aufzeichnung.") }
+                } else {
+                    summary(report)
+                    if period == .week || period == .month {
+                        DayStripsCard(days: days, title: period == .week ? "Die Woche" : "Die letzten 30 Tage")
                     } else {
-                        summary(report)
                         BatteryChart(report: report, period: period)
                         PowerChart(report: report, period: period)
-                        HStack(alignment: .top, spacing: 16) {
-                            Card {
-                                VStack(alignment: .leading, spacing: 14) {
-                                    SectionTitle(title: "Aufteilung", subtitle: "Gesamter Energiebedarf im Zeitraum")
-                                    BreakdownDonut(report: report)
-                                }
-                            }
-                            .frame(width: 400)
-                            TopApps(report: report)
-                        }
                     }
-                } else {
-                    ProgressView().frame(maxWidth: .infinity, minHeight: 300)
+                    HStack(alignment: .top, spacing: 22) {
+                        EnergySplitCard(report: report)
+                        TopApps(report: report)
+                    }
+                    .fixedSize(horizontal: false, vertical: true)
                 }
+            } else {
+                ProgressView().frame(maxWidth: .infinity, minHeight: 300)
             }
-            .padding(24)
-            .frame(maxWidth: 1240)
-            .frame(maxWidth: .infinity)
         }
-        .task(id: "\(period.rawValue)-\(batteryOnly)-\(monitor.revision)") {
+        .task(id: "\(periodRaw)-\(batteryOnly)-\(monitor.revision)") {
             let interval = period.interval()
             report = try? monitor.store?.report(interval, bucket: period.bucket, batteryOnly: batteryOnly)
+            days = (try? monitor.store?.dayStrips(interval)) ?? []
         }
     }
 
     private func summary(_ report: Report) -> some View {
-        HStack(spacing: 16) {
-            StatTile(symbol: "bolt.fill", tint: Theme.accent, label: "Energie", value: Format.energy(report.totalJoules),
-                     detail: report.batteryPercent(report.totalJoules) < 100
-                        ? "entspricht \(Format.percent(report.batteryPercent(report.totalJoules))) einer Akkuladung"
-                        : "entspricht \(Format.number(report.batteryPercent(report.totalJoules) / 100)) Akkuladungen")
-            StatTile(symbol: "battery.25percent", tint: Theme.charging, label: "Akku verbraucht", value: Format.percent(report.percentUsed),
-                     detail: "im Akkubetrieb, ohne Ruhezustand")
-            StatTile(symbol: "gauge.with.dots.needle.50percent", tint: Theme.apps, label: "Ø Leistung", value: Format.watts(report.averageWatts),
-                     detail: "während der Mac wach war")
-            StatTile(symbol: "clock", tint: .secondary, label: "Erfasst", value: Format.duration(report.recordedSeconds, short: true),
+        let charges = report.batteryPercent(report.totalJoules)
+        return HStack(spacing: 14) {
+            StatTile(label: "Energie", value: Format.energy(report.totalJoules),
+                     detail: charges < 100 ? "\(Format.percent(charges)) einer Akkuladung" : "≈ \(Format.number(charges / 100)) volle Akkuladungen")
+            StatTile(label: "Akku verbraucht", value: Format.percent(report.percentUsed), detail: "im Akkubetrieb, ohne Ruhezustand")
+            StatTile(label: "Ø Leistung", value: Format.watts(report.averageWatts), detail: "während der Mac wach war")
+            StatTile(label: "Erfasst", value: Format.duration(report.recordedSeconds, short: true),
                      detail: "davon \(Format.duration(report.batterySeconds, short: true)) auf Akku")
         }
+    }
+}
+
+/// One row per day: on battery, charging, on the adapter, asleep.
+private struct DayStripsCard: View {
+    var days: [DayStrip]
+    var title: String
+
+    var body: some View {
+        Card(padding: 22) {
+            VStack(alignment: .leading, spacing: 14) {
+                HStack {
+                    Text(title).font(.system(size: 17, weight: .semibold))
+                    Spacer()
+                    Legend(items: [("Akku", Theme.accent), ("Laden", Theme.charging), ("Netzteil", Theme.charging.opacity(0.3)), ("Ruhezustand", Color.indigo.opacity(0.3))])
+                }
+                VStack(spacing: 9) {
+                    ForEach(days) { day in
+                        HStack(spacing: 14) {
+                            Text(day.day.formatted(.dateTime.weekday(.abbreviated).day()))
+                                .font(.system(size: 13, weight: Calendar.current.isDateInToday(day.day) ? .semibold : .regular))
+                                .frame(width: 70, alignment: .leading)
+                            GeometryReader { proxy in
+                                ZStack(alignment: .leading) {
+                                    Rectangle().fill(Theme.track)
+                                    ForEach(day.blocks, id: \.self) { block in
+                                        let x0 = CGFloat(block.start.timeIntervalSince(day.day) / 86400) * proxy.size.width
+                                        let x1 = CGFloat(block.end.timeIntervalSince(day.day) / 86400) * proxy.size.width
+                                        Rectangle().fill(color(block.kind)).frame(width: max(1, x1 - x0)).offset(x: x0)
+                                    }
+                                }
+                                .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                            }
+                            .frame(height: 22)
+                            Text(day.percentUsed >= 0.5 ? "−\(Format.number(day.percentUsed, digits: 0)) %" : "–")
+                                .font(Theme.number(13, weight: .regular)).foregroundStyle(.secondary)
+                                .frame(width: 56, alignment: .trailing)
+                        }
+                    }
+                }
+                HStack(spacing: 14) {
+                    Color.clear.frame(width: 70, height: 1)
+                    HStack {
+                        ForEach(["0 Uhr", "6", "12", "18", "24"], id: \.self) { label in
+                            if label != "0 Uhr" { Spacer() }
+                            Text(label)
+                        }
+                    }
+                    Text("Akku").frame(width: 56, alignment: .trailing)
+                }
+                .font(.system(size: 11)).foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private func color(_ kind: DayStrip.Kind) -> Color {
+        switch kind {
+        case .battery: Theme.accent
+        case .charging: Theme.charging
+        case .adapter: Theme.charging.opacity(0.3)
+        case .sleep: Color.indigo.opacity(0.3)
+        }
+    }
+}
+
+/// Apps vs. services vs. the machine itself, as one bar and three rows.
+private struct EnergySplitCard: View {
+    var report: Report
+
+    var body: some View {
+        let parts: [(String, Double, Color)] = [("Apps", report.breakdown.apps, Theme.apps),
+                                                 ("macOS-Dienste", report.breakdown.services, Theme.services),
+                                                 ("Display & Hardware", report.breakdown.hardware, Theme.hardware)]
+        Card {
+            VStack(alignment: .leading, spacing: 14) {
+                Text("Wohin die Energie ging").font(.system(size: 15, weight: .semibold))
+                GeometryReader { proxy in
+                    HStack(spacing: 2) {
+                        ForEach(parts, id: \.0) { part in
+                            Rectangle().fill(part.2).frame(width: max(2, (proxy.size.width - 4) * report.share(part.1)))
+                        }
+                    }
+                    .clipShape(Capsule())
+                }
+                .frame(height: 14)
+                VStack(spacing: 8) {
+                    ForEach(parts, id: \.0) { part in
+                        HStack {
+                            RoundedRectangle(cornerRadius: 2).fill(part.2).frame(width: 9, height: 9)
+                            Text(part.0)
+                            Spacer()
+                            Text(Format.energy(part.1)).foregroundStyle(.secondary)
+                            Text(Format.share(report.share(part.1))).fontWeight(.semibold).frame(width: 44, alignment: .trailing)
+                        }
+                        .font(.system(size: 13).monospacedDigit())
+                    }
+                }
+                Text(sentence).font(.system(size: 13)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    private var sentence: String {
+        let hardware = report.share(report.breakdown.hardware)
+        let top = report.apps.first { $0.app.category == .app }
+        var text = hardware >= 0.5
+            ? "Mehr als die Hälfte hat der Mac selbst gebraucht – vor allem Bildschirm und Grafik."
+            : "Deine Apps und Dienste machten zusammen \(Format.share(1 - hardware)) aus."
+        if let top { text += " Größte App: \(top.app.name) mit \(Format.energy(top.joules))." }
+        return text
     }
 }
 
@@ -224,34 +336,28 @@ private struct TopApps: View {
     @AppStorage("page") private var page = Page.now.rawValue
 
     var body: some View {
-        let top = Array(report.apps.prefix(7))
+        let top = Array(report.apps.prefix(6))
         let maximum = top.first?.joules ?? 1
         Card {
             VStack(alignment: .leading, spacing: 10) {
                 HStack {
-                    SectionTitle(title: "Größte Verbraucher", subtitle: "Gemessene Prozessor-Energie inkl. Helfer-Prozesse")
+                    Text("Größte Verbraucher").font(.system(size: 15, weight: .semibold))
                     Spacer()
                     Button("Alle Apps") { page = Page.apps.rawValue }.buttonStyle(.link)
                 }
                 ForEach(top) { total in
                     HStack(spacing: 10) {
                         AppIcon(app: total.app, size: 24)
-                        VStack(alignment: .leading, spacing: 3) {
-                            HStack {
-                                Text(total.app.name).font(.system(size: 12.5, weight: .medium)).lineLimit(1)
-                                Spacer()
-                                if total.isEstimated { EstimatedPill() }
-                                Text((total.isEstimated ? "≈ " : "") + Format.energy(total.joules)).font(Theme.number(12, weight: .medium))
-                                Text(Format.percent(report.batteryPercent(total.joules), digits: 1) + " Akku")
-                                    .font(Theme.number(11, weight: .regular)).foregroundStyle(.secondary)
-                                    .frame(width: 74, alignment: .trailing)
+                        Text(total.app.name).font(.system(size: 13)).lineLimit(1)
+                        if total.isEstimated { EstimatedPill() }
+                        Spacer()
+                        Capsule().fill(Theme.track).frame(width: 110, height: 5)
+                            .overlay(alignment: .leading) {
+                                Capsule().fill(total.app.category == .app ? Theme.apps : Theme.services)
+                                    .frame(width: max(3, 110 * total.joules / maximum), height: 5)
                             }
-                            GeometryReader { proxy in
-                                Capsule().fill((total.app.category == .app ? Theme.apps : Theme.services).gradient)
-                                    .frame(width: max(3, proxy.size.width * total.joules / maximum), height: 5)
-                            }
-                            .frame(height: 5)
-                        }
+                        Text((total.isEstimated ? "≈ " : "") + Format.energy(total.joules))
+                            .font(Theme.number(13, weight: .regular)).frame(width: 74, alignment: .trailing)
                     }
                 }
             }

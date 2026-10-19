@@ -14,101 +14,97 @@ enum Page: String, CaseIterable, Identifiable {
         case .alerts: "Hinweise"
         }
     }
-
-    var symbol: String {
-        switch self {
-        case .now: "bolt.fill"
-        case .history: "chart.xyaxis.line"
-        case .apps: "square.grid.2x2.fill"
-        case .battery: "battery.100percent"
-        case .alerts: "bell.badge.fill"
-        }
-    }
 }
 
 struct MainView: View {
     @EnvironmentObject private var monitor: Monitor
     @AppStorage("page") private var page = Page.now.rawValue
-    @AppStorage("period") private var periodRaw = Period.today.rawValue
-    @AppStorage("batteryOnly") private var batteryOnly = false
 
-    private var selection: Binding<Page?> {
-        Binding(get: { Page(rawValue: page) ?? .now }, set: { page = ($0 ?? .now).rawValue })
-    }
-    private var period: Binding<Period> {
-        Binding(get: { Period(rawValue: periodRaw) ?? .today }, set: { periodRaw = $0.rawValue })
-    }
+    private var current: Page { Page(rawValue: page) ?? .now }
 
     var body: some View {
-        NavigationSplitView {
-            List(selection: selection) {
-                ForEach(Page.allCases) { item in
-                    Label(item.title, systemImage: item.symbol)
-                        .badge(item == .alerts && monitor.unreadAlerts > 0 ? monitor.unreadAlerts : 0)
-                        .tag(item)
+        ZStack {
+            WindowGlass().ignoresSafeArea()
+            Group {
+                switch current {
+                case .now: NowView()
+                case .history: HistoryView()
+                case .apps: AppsView()
+                case .battery: BatteryView()
+                case .alerts: AlertsView()
                 }
             }
-            .navigationSplitViewColumnWidth(min: 190, ideal: 210, max: 260)
-            .safeAreaInset(edge: .bottom) { SidebarStatus().padding(12) }
-        } detail: {
-            detail
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(Color(nsColor: .windowBackgroundColor))
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
+        .toolbar {
+            ToolbarItem(placement: .principal) {
+                NavBar(selection: Binding(get: { current }, set: { page = $0.rawValue }), unread: monitor.unreadAlerts)
+            }
+            ToolbarItem(placement: .primaryAction) {
+                SettingsLink { Image(systemName: "gearshape") }.help("Einstellungen")
+            }
+        }
+        .navigationTitle("Joule")
         .liveSampling(monitor)
         .tint(Theme.accent)
     }
+}
 
-    @ViewBuilder private var detail: some View {
-        let current = Page(rawValue: page) ?? .now
-        Group {
-            switch current {
-            case .now: NowView()
-            case .history: HistoryView(period: period.wrappedValue, batteryOnly: batteryOnly)
-            case .apps: AppsView(period: period.wrappedValue, batteryOnly: batteryOnly)
-            case .battery: BatteryView()
-            case .alerts: AlertsView()
-            }
-        }
-        .navigationTitle(current.title)
-        .toolbar {
-            if current == .history || current == .apps {
-                ToolbarItemGroup(placement: .primaryAction) {
-                    Picker("Zeitraum", selection: period) {
-                        ForEach(Period.allCases) { Text($0.title).tag($0) }
+/// The five sections as a segmented bar in the middle of the toolbar.
+struct NavBar: View {
+    @Binding var selection: Page
+    var unread: Int
+
+    var body: some View {
+        HStack(spacing: 2) {
+            ForEach(Page.allCases) { item in
+                let selected = item == selection
+                Button { selection = item } label: {
+                    HStack(spacing: 5) {
+                        Text(item.title)
+                        if item == .alerts && unread > 0 {
+                            Text("\(unread)")
+                                .font(.system(size: 10.5, weight: .semibold))
+                                .foregroundStyle(.white)
+                                .padding(.horizontal, 5).padding(.vertical, 1)
+                                .background(Capsule().fill(Theme.accent))
+                        }
                     }
-                    .pickerStyle(.segmented)
-                    .labelsHidden()
-                    Toggle(isOn: $batteryOnly) { Label("Nur Akku", systemImage: "battery.75percent").labelStyle(.titleAndIcon) }
-                        .toggleStyle(.button)
-                        .help("Nur Zeiten ohne Netzteil auswerten")
+                    .font(.system(size: 13, weight: selected ? .semibold : .regular))
+                    .foregroundStyle(selected ? Color.primary : Color.secondary)
+                    .padding(.horizontal, 16).padding(.vertical, 5)
+                    .background {
+                        if selected {
+                            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                .fill(Color(nsColor: .controlBackgroundColor))
+                                .shadow(color: .black.opacity(0.14), radius: 1.5, y: 1)
+                        }
+                    }
+                    .contentShape(Rectangle())
                 }
+                .buttonStyle(.plain)
+                .accessibilityAddTraits(selected ? .isSelected : [])
             }
         }
+        .padding(3)
+        .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Color.primary.opacity(0.07)))
+        .animation(.snappy(duration: 0.2), value: selection)
     }
 }
 
-private struct SidebarStatus: View {
-    @EnvironmentObject private var monitor: Monitor
+/// Shared page frame: scrolls, centred, comfortable reading width.
+struct PageScroll<Content: View>: View {
+    var maxWidth: CGFloat = 1080
+    @ViewBuilder var content: Content
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            if let power = monitor.power {
-                HStack(spacing: 10) {
-                    BatteryGlyph(percent: power.percent, charging: power.source == .charging, plugged: power.source == .adapter)
-                        .frame(width: 34, height: 16)
-                    Text(Format.percent(power.percent)).font(Theme.number(15))
-                    Spacer()
-                    Text(Format.watts(power.systemWatts)).font(Theme.number(13, weight: .medium)).foregroundStyle(.secondary)
-                }
-            }
-            HStack(spacing: 6) {
-                Circle().fill(monitor.errorMessage == nil ? Theme.charging : .red).frame(width: 6, height: 6)
-                Text(monitor.demo ? "Beispieldaten" : (monitor.errorMessage == nil ? "Zeichnet auf" : "Fehler beim Speichern"))
-                    .font(.system(size: 11)).foregroundStyle(.secondary)
-            }
+        ScrollView {
+            VStack(alignment: .leading, spacing: 22) { content }
+                .padding(.horizontal, 36)
+                .padding(.top, 28)
+                .padding(.bottom, 40)
+                .frame(maxWidth: maxWidth)
+                .frame(maxWidth: .infinity)
         }
-        .padding(12)
-        .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(.quaternary.opacity(0.6)))
     }
 }

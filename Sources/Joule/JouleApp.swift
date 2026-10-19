@@ -21,7 +21,7 @@ struct JouleApp: App {
                 .frame(minWidth: 960, minHeight: 640)
         }
         .defaultSize(width: 1220, height: 820)
-        .windowToolbarStyle(.unified)
+        .windowToolbarStyle(.unified(showsTitle: false))
         .commands {
             CommandGroup(replacing: .newItem) {}
         }

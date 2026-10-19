@@ -1,4 +1,4 @@
-import Charts
+import AppKit
 import JouleCore
 import SwiftUI
 
@@ -7,190 +7,72 @@ struct NowView: View {
     @AppStorage("page") private var page = Page.now.rawValue
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                if let message = monitor.errorMessage { ErrorBanner(message: message) }
-                HStack(alignment: .top, spacing: 16) {
-                    BatteryCard().frame(maxWidth: 420)
-                    PowerCard()
+        PageScroll {
+            if let message = monitor.errorMessage { ErrorBanner(message: message) }
+            NowHeader()
+            if let session = monitor.currentSession {
+                Card(padding: 24) {
+                    SessionBreakdownView(breakdown: session, timeline: monitor.currentTimeline, fullWh: monitor.power?.fullWh ?? 0,
+                                         blockers: monitor.blockers.filter { $0.app.category == .app }.map(\.app.name),
+                                         showAll: { page = Page.battery.rawValue })
                 }
-                .fixedSize(horizontal: false, vertical: true)
-                if let session = monitor.currentSession {
-                    Card {
-                        SessionBreakdownView(breakdown: session, fullWh: monitor.power?.fullWh ?? 0,
-                                             blockers: monitor.blockers.filter { $0.app.category == .app }.map(\.app.name))
+            } else {
+                Card(padding: 24) {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Am Netzteil").font(.system(size: 22, weight: .bold))
+                        EmptyNote(text: "Sobald du das Netzteil abziehst, zeigt Joule hier, wohin jedes Prozent fließt.")
                     }
                 }
-                TodayStrip()
-                HStack(alignment: .top, spacing: 16) {
-                    LiveAppsCard()
-                    VStack(spacing: 16) {
-                        Card {
-                            VStack(alignment: .leading, spacing: 14) {
-                                SectionTitle(title: "Wohin geht der Strom?", subtitle: "Heute, gesamter Mac")
-                                if let today = monitor.today, !today.isEmpty {
-                                    BreakdownDonut(report: today)
-                                } else {
-                                    EmptyNote(text: "Nach den ersten Minuten Aufzeichnung siehst du hier die Aufteilung.")
-                                }
-                            }
-                        }
-                        BlockersCard()
-                    }
-                    .frame(width: 340)
-                }
-                RecentAlerts { page = Page.alerts.rawValue }
             }
-            .padding(24)
-            .frame(maxWidth: 1240)
-            .frame(maxWidth: .infinity)
+            HStack(alignment: .top, spacing: 22) {
+                LiveAppsCard()
+                BlockersCard()
+            }
+            .fixedSize(horizontal: false, vertical: true)
         }
     }
 }
 
-private struct BatteryCard: View {
+/// Battery, state and the whole-machine draw split into its parts.
+private struct NowHeader: View {
     @EnvironmentObject private var monitor: Monitor
 
     var body: some View {
-        Card(padding: 22) {
+        HStack(alignment: .center, spacing: 20) {
             if let power = monitor.power {
-                VStack(alignment: .leading, spacing: 18) {
-                    HStack(alignment: .center, spacing: 22) {
-                        BatteryGlyph(percent: power.percent, charging: power.source == .charging, plugged: power.source == .adapter)
-                            .frame(width: 124, height: 56)
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(Format.percent(power.percent))
-                                .font(Theme.number(46))
-                                .contentTransition(.numericText())
-                            Text(power.stateText).font(.system(size: 12.5)).foregroundStyle(.secondary)
-                        }
+                BatteryGlyph(percent: power.percent, charging: power.source == .charging, plugged: power.source == .adapter)
+                    .frame(width: 66, height: 32)
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack(spacing: 10) {
+                        Text(Format.percent(power.percent))
+                            .font(.system(size: 34, weight: .bold).monospacedDigit())
+                            .tracking(-0.5)
+                            .contentTransition(.numericText())
+                        if monitor.demo { Pill(text: "Beispieldaten") }
                     }
-                    Divider()
-                    HStack(spacing: 22) {
-                        Metric(label: "Zustand", value: Format.percent(power.healthPercent))
-                        Metric(label: "Ladezyklen", value: "\(power.cycleCount)")
-                        Metric(label: "Rest", value: "\(Format.number(power.remainingWh, digits: 0)) Wh")
-                        if let brightness = monitor.brightness {
-                            Metric(label: "Helligkeit", value: Format.percent(brightness * 100))
-                        }
-                    }
+                    Text("\(power.stateText) · Zustand \(Format.percent(power.healthPercent))")
+                        .font(.system(size: 13)).foregroundStyle(.secondary)
                 }
+                Spacer(minLength: 20)
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack(alignment: .firstTextBaseline) {
+                        Text(Format.watts(power.systemWatts))
+                            .font(.system(size: 24, weight: .semibold).monospacedDigit())
+                            .foregroundStyle(Theme.accent)
+                            .contentTransition(.numericText())
+                        Spacer()
+                        Text("gerade, ganzer Mac").font(.system(size: 11)).foregroundStyle(.secondary)
+                    }
+                    PowerSplitView(total: power.systemWatts, split: monitor.liveSplit, compact: true)
+                }
+                .padding(.horizontal, 16).padding(.vertical, 12)
+                .frame(width: 330)
+                .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(Theme.glass))
+                .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).strokeBorder(Theme.glassEdge.opacity(0.8), lineWidth: 1))
+                .shadow(color: .black.opacity(0.07), radius: 3, y: 1)
             } else {
                 EmptyNote(text: monitor.noBattery ? "Dieser Mac meldet keinen Akku." : "Lese Akkuwerte …")
             }
-        }
-    }
-}
-
-private struct PowerCard: View {
-    @EnvironmentObject private var monitor: Monitor
-
-    private var average: Double? {
-        let recent = monitor.recentPower.filter { Date().timeIntervalSince($0.date) < 5 * 60 }
-        guard !recent.isEmpty else { return nil }
-        return recent.map(\.watts).reduce(0, +) / Double(recent.count)
-    }
-
-    var body: some View {
-        Card(padding: 22) {
-            VStack(alignment: .leading, spacing: 10) {
-                HStack(alignment: .firstTextBaseline) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Leistung jetzt").font(.system(size: 12.5, weight: .medium)).foregroundStyle(.secondary)
-                        Text(monitor.power.map { Format.watts($0.systemWatts) } ?? "–")
-                            .font(Theme.number(46))
-                            .foregroundStyle(Theme.accent)
-                            .contentTransition(.numericText())
-                    }
-                    Spacer()
-                    if let power = monitor.power, power.source == .battery, let average, average > 0.5 {
-                        VStack(alignment: .trailing, spacing: 2) {
-                            Text("Bei diesem Tempo").font(.system(size: 11.5)).foregroundStyle(.secondary)
-                            Text("noch \(Format.duration(power.remainingWh / average * 3600, short: true))")
-                                .font(Theme.number(20, weight: .medium))
-                        }
-                    } else if let power = monitor.power, power.source != .battery, power.adapterWatts > 0 {
-                        VStack(alignment: .trailing, spacing: 2) {
-                            Text("Netzteil liefert").font(.system(size: 11.5)).foregroundStyle(.secondary)
-                            Text(Format.watts(power.adapterWatts)).font(Theme.number(20, weight: .medium))
-                        }
-                    }
-                }
-                if let power = monitor.power {
-                    PowerSplitView(total: power.systemWatts, split: monitor.liveSplit)
-                }
-                Chart(monitor.recentPower) { point in
-                    AreaMark(x: .value("Zeit", point.date), y: .value("Watt", point.watts))
-                        .interpolationMethod(.monotone)
-                        .foregroundStyle(LinearGradient(colors: [Theme.accent.opacity(0.35), Theme.accent.opacity(0.02)], startPoint: .top, endPoint: .bottom))
-                    LineMark(x: .value("Zeit", point.date), y: .value("Watt", point.watts))
-                        .interpolationMethod(.monotone)
-                        .foregroundStyle(Theme.accent)
-                        .lineStyle(StrokeStyle(lineWidth: 2))
-                }
-                .chartXScale(domain: (monitor.recentPower.first?.date ?? Date().addingTimeInterval(-60))...Date())
-                .chartYAxis { AxisMarks(position: .trailing, values: .automatic(desiredCount: 3)) { value in AxisGridLine(); AxisValueLabel { if let w = value.as(Double.self) { Text(Format.watts(w)) } } } }
-                .chartXAxis { AxisMarks(values: .stride(by: .minute, count: 10)) { AxisValueLabel(format: .dateTime.hour().minute()) } }
-                .frame(height: 96)
-                .overlay {
-                    if monitor.recentPower.count < 2 { Text("Die Kurve füllt sich in den nächsten Minuten.").font(.caption).foregroundStyle(.secondary) }
-                }
-                Text("Gesamter Mac inkl. Display, gemessen am Akku. Bis zu 30 Minuten zurück.")
-                    .font(.system(size: 11)).foregroundStyle(.tertiary)
-            }
-        }
-    }
-}
-
-private struct TodayStrip: View {
-    @EnvironmentObject private var monitor: Monitor
-
-    var body: some View {
-        let today = monitor.today
-        HStack(spacing: 16) {
-            StatTile(symbol: "battery.50percent", tint: Theme.charging, label: "Heute verbraucht",
-                     value: today.map { Format.percent($0.percentUsed) } ?? "–",
-                     detail: today.map { "\(Format.energy($0.totalJoules)) insgesamt" } ?? "")
-            StatTile(symbol: "gauge.with.dots.needle.33percent", tint: Theme.accent, label: "Ø Leistung heute",
-                     value: today.map { Format.watts($0.averageWatts) } ?? "–",
-                     detail: today.map { "über \(Format.duration($0.recordedSeconds)) wach" } ?? "")
-            StatTile(symbol: "powerplug", tint: Theme.apps, label: "Ohne Netzteil",
-                     value: today.map { Format.duration($0.batterySeconds, short: true) } ?? "–",
-                     detail: "heute im Akkubetrieb")
-            StatTile(symbol: "moon.zzz.fill", tint: .indigo, label: "Ruhezustand",
-                     value: today.flatMap { $0.sleeps.last }.map { Format.percent($0.percentLost) } ?? "–",
-                     detail: today.flatMap { $0.sleeps.last }.map { "in \(Format.duration($0.hours * 3600)) verloren" } ?? "noch keine Nacht erfasst")
-        }
-    }
-}
-
-struct StatTile: View {
-    var symbol: String
-    var tint: Color
-    var label: String
-    var value: String
-    var detail: String
-
-    var body: some View {
-        Card(padding: 16) {
-            VStack(alignment: .leading, spacing: 6) {
-                Label(label, systemImage: symbol)
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(.secondary)
-                    .labelStyle(TintedIconLabel(tint: tint))
-                Text(value).font(Theme.number(26))
-                Text(detail).font(.system(size: 11.5)).foregroundStyle(.secondary).lineLimit(1)
-            }
-        }
-    }
-}
-
-struct TintedIconLabel: LabelStyle {
-    var tint: Color
-    func makeBody(configuration: Configuration) -> some View {
-        HStack(spacing: 6) {
-            configuration.icon.foregroundStyle(tint)
-            configuration.title
         }
     }
 }
@@ -201,20 +83,25 @@ private struct LiveAppsCard: View {
     var body: some View {
         Card {
             VStack(alignment: .leading, spacing: 12) {
-                HStack {
-                    SectionTitle(title: "Gerade aktiv", subtitle: "Prozessor-Energie pro App, alle 3 Sekunden – Display & Hardware stecken nicht darin")
+                HStack(alignment: .firstTextBaseline) {
+                    Text("Gerade aktiv").font(.system(size: 15, weight: .semibold))
                     Spacer()
-                    LivePulse()
+                    Label("live, alle 3 s", systemImage: "circle.fill")
+                        .labelStyle(TintedIconLabel(tint: Theme.charging))
+                        .font(.system(size: 11)).foregroundStyle(.secondary)
+                        .imageScale(.small)
                 }
                 if monitor.liveApps.isEmpty {
-                    EmptyNote(text: "Messe …").frame(maxWidth: .infinity, minHeight: 120)
+                    EmptyNote(text: "Messe …").frame(minHeight: 120, alignment: .topLeading)
                 } else {
-                    let maximum = max(1, monitor.liveApps.map(\.watts).max() ?? 1)
-                    VStack(spacing: 4) {
-                        ForEach(monitor.liveApps) { LiveAppRow(item: $0, maximum: maximum) }
+                    let maximum = max(0.5, monitor.liveApps.map(\.watts).max() ?? 1)
+                    VStack(spacing: 2) {
+                        ForEach(monitor.liveApps.prefix(6)) { LiveAppRow(item: $0, maximum: maximum) }
                     }
                     .animation(.smooth, value: monitor.liveApps.map(\.id))
                 }
+                Text("Prozessor-Energie. Bildschirm und Grafik stecken in „Display & Hardware“.")
+                    .font(.system(size: 11)).foregroundStyle(.secondary)
             }
         }
     }
@@ -227,110 +114,73 @@ struct LiveAppRow: View {
 
     var body: some View {
         HStack(spacing: 10) {
-            AppIcon(app: item.app, size: compact ? 20 : 26)
-            VStack(alignment: .leading, spacing: 3) {
-                HStack(spacing: 6) {
-                    Text(item.app.name).font(.system(size: compact ? 12 : 13, weight: .medium)).lineLimit(1)
-                    if item.background && !compact && item.app.category == .app { Pill(text: "Hintergrund") }
-                    if item.gpuShare >= 0.05 && !compact { Pill(text: "GPU \(Format.share(item.gpuShare))", color: .purple) }
-                    if item.estimated && !compact { EstimatedPill() }
-                }
-                if !compact {
-                    GeometryReader { proxy in
-                        Capsule().fill(Theme.accent.gradient)
-                            .frame(width: max(3, proxy.size.width * item.watts / maximum), height: 5)
-                    }
-                    .frame(height: 5)
-                }
+            AppIcon(app: item.app, size: compact ? 20 : 24)
+            HStack(spacing: 6) {
+                Text(item.app.name).font(.system(size: compact ? 12.5 : 13)).lineLimit(1)
+                if item.background && !compact && item.app.category == .app { Pill(text: "Hintergrund") }
+                if item.gpuShare >= 0.05 && !compact { Pill(text: "GPU \(Format.share(item.gpuShare))", color: .purple) }
+                if item.estimated && !compact { EstimatedPill() }
             }
             Spacer(minLength: 8)
-            Text((item.estimated ? "≈ " : "") + Format.smallWatts(item.watts))
-                .font(Theme.number(compact ? 12 : 13, weight: .medium))
-                .foregroundStyle(.secondary)
-        }
-        .padding(.vertical, compact ? 3 : 5)
-    }
-}
-
-/// Static on purpose: a repeating animation redraws the window every frame and costs real battery.
-/// Marks values derived from CPU time instead of the energy counter.
-struct EstimatedPill: View {
-    var body: some View {
-        Pill(text: "geschätzt", color: .orange)
-            .help("Joule darf diesen Prozess nicht direkt messen. Die Energie ist aus seiner Prozessorzeit geschätzt (über das Systemwerkzeug ps).")
-    }
-}
-
-struct LivePulse: View {
-    var body: some View {
-        HStack(spacing: 5) {
-            Circle().fill(Theme.charging).frame(width: 7, height: 7)
-            Text("Live").font(.system(size: 11, weight: .medium)).foregroundStyle(.secondary)
-        }
-    }
-}
-
-struct BreakdownDonut: View {
-    var report: Report
-
-    private var parts: [(String, Double, Color, String)] {
-        [("Apps", report.breakdown.apps, Theme.apps, "Prozessor-Energie deiner Programme"),
-         ("macOS-Dienste", report.breakdown.services, Theme.services, "Indizierung, Synchronisierung, Tools"),
-         ("Display & Hardware", report.breakdown.hardware, Theme.hardware, "Bildschirm, Grafik, Speicher, Funk")]
-    }
-
-    private var chargesLabel: String {
-        let percent = report.batteryPercent(report.totalJoules)
-        return percent < 100 ? "\(Format.percent(percent)) Akku" : "\(Format.number(percent / 100)) Ladungen"
-    }
-
-    var body: some View {
-        HStack(spacing: 18) {
-            Chart(parts, id: \.0) { part in
-                SectorMark(angle: .value("Energie", part.1), innerRadius: .ratio(0.64), angularInset: 1.5)
-                    .cornerRadius(3)
-                    .foregroundStyle(part.2)
-            }
-            .chartLegend(.hidden)
-            .frame(width: 112, height: 112)
-            .overlay {
-                VStack(spacing: 0) {
-                    Text(Format.energy(report.totalJoules)).font(Theme.number(15))
-                    Text(chargesLabel).font(.system(size: 10)).foregroundStyle(.secondary)
-                }
-            }
-            VStack(alignment: .leading, spacing: 9) {
-                ForEach(parts, id: \.0) { part in
-                    HStack(alignment: .top, spacing: 8) {
-                        RoundedRectangle(cornerRadius: 2).fill(part.2).frame(width: 9, height: 9).padding(.top, 3)
-                        VStack(alignment: .leading, spacing: 1) {
-                            HStack {
-                                Text(part.0).font(.system(size: 12, weight: .medium))
-                                Spacer()
-                                Text(Format.share(report.share(part.1))).font(Theme.number(12, weight: .medium))
-                            }
-                            Text(part.3).font(.system(size: 10.5)).foregroundStyle(.secondary).lineLimit(1)
-                        }
+            if !compact {
+                Capsule().fill(Theme.track).frame(width: 110, height: 5)
+                    .overlay(alignment: .leading) {
+                        Capsule().fill(Theme.accent).frame(width: max(3, 110 * min(1, item.watts / maximum)), height: 5)
                     }
-                }
             }
+            Text((item.estimated ? "≈ " : "") + Format.smallWatts(item.watts))
+                .font(Theme.number(compact ? 12 : 13, weight: .regular))
+                .foregroundStyle(.secondary)
+                .frame(width: compact ? nil : 64, alignment: .trailing)
         }
+        .padding(.vertical, compact ? 3 : 4)
     }
 }
 
+/// What keeps the Mac awake, with something to do about it.
 private struct BlockersCard: View {
     @EnvironmentObject private var monitor: Monitor
 
+    private var appBlockers: [Blocker] { monitor.blockers.filter { $0.app.category == .app } }
+
     var body: some View {
         Card {
-            VStack(alignment: .leading, spacing: 10) {
-                SectionTitle(title: "Hält wach", subtitle: "Verhindert den automatischen Ruhezustand")
-                if monitor.blockers.isEmpty {
-                    Label("Nichts – dein Mac darf schlafen.", systemImage: "checkmark.circle.fill")
-                        .font(.system(size: 12.5))
-                        .labelStyle(TintedIconLabel(tint: Theme.charging))
+            VStack(alignment: .leading, spacing: 14) {
+                Text("Hält wach").font(.system(size: 15, weight: .semibold))
+                if let blocker = appBlockers.first ?? monitor.blockers.first {
+                    HStack(spacing: 12) {
+                        SymbolTile(symbol: "cup.and.saucer.fill", tint: .brown, size: 34)
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text("\(blocker.app.name) verhindert den Ruhezustand").font(.system(size: 14, weight: .semibold))
+                            Text([blocker.since.map { "seit \(Format.duration(Date().timeIntervalSince($0)))" }, blocker.reason.isEmpty ? nil : "„\(blocker.reason)“"]
+                                .compactMap { $0 }.joined(separator: " · "))
+                                .font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(1)
+                        }
+                    }
+                    Text("Solange \(blocker.app.name) das tut, schläft dein Mac nicht von selbst ein – auch nicht bei gesperrtem Bildschirm.")
+                        .font(.system(size: 13)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                    HStack(spacing: 8) {
+                        if blocker.app.category == .app, monitor.isRunning(blocker.app) {
+                            Button("\(blocker.app.name) beenden") { monitor.quit(blocker.app) }
+                                .buttonStyle(.borderedProminent)
+                        }
+                        if !monitor.settings.muted.contains(blocker.app.key) {
+                            Button("Nicht mehr melden") { monitor.mute(blocker.app.key) }
+                        }
+                    }
+                    .controlSize(.regular)
+                    if monitor.blockers.count > 1 {
+                        Text("Außerdem: \(monitor.blockers.dropFirst().map(\.app.name).joined(separator: ", "))")
+                            .font(.system(size: 11.5)).foregroundStyle(.secondary)
+                    }
                 } else {
-                    ForEach(monitor.blockers) { BlockerRow(blocker: $0) }
+                    HStack(spacing: 12) {
+                        SymbolTile(symbol: "moon.zzz.fill", tint: .indigo, size: 34)
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text("Nichts hält deinen Mac wach").font(.system(size: 14, weight: .semibold))
+                            Text("Er darf schlafen, sobald du ihn nicht benutzt.").font(.system(size: 12)).foregroundStyle(.secondary)
+                        }
+                    }
                 }
             }
         }
@@ -354,27 +204,37 @@ struct BlockerRow: View {
     }
 }
 
-private struct RecentAlerts: View {
-    @EnvironmentObject private var monitor: Monitor
-    var showAll: () -> Void
-    @ViewState private var alerts: [Notice] = []
+/// Marks values derived from CPU time instead of the energy counter.
+struct EstimatedPill: View {
+    var body: some View {
+        Pill(text: "geschätzt", color: Theme.accent)
+            .help("Joule darf diesen Prozess nicht direkt messen. Die Energie ist aus seiner Prozessorzeit geschätzt (über das Systemwerkzeug ps).")
+    }
+}
+
+struct StatTile: View {
+    var label: String
+    var value: String
+    var detail: String
 
     var body: some View {
-        Group {
-            if !alerts.isEmpty {
-                Card {
-                    VStack(alignment: .leading, spacing: 10) {
-                        HStack {
-                            SectionTitle(title: "Letzte Hinweise")
-                            Spacer()
-                            Button("Alle anzeigen", action: showAll).buttonStyle(.link)
-                        }
-                        ForEach(alerts) { NoticeRow(alert: $0, compact: true) }
-                    }
-                }
+        Card(padding: 16) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(label).font(.system(size: 12)).foregroundStyle(.secondary)
+                Text(value).font(.system(size: 26, weight: .bold).monospacedDigit())
+                Text(detail).font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(1)
             }
         }
-        .task(id: monitor.revision) { alerts = (try? monitor.store?.alerts(limit: 3)) ?? [] }
+    }
+}
+
+struct TintedIconLabel: LabelStyle {
+    var tint: Color
+    func makeBody(configuration: Configuration) -> some View {
+        HStack(spacing: 6) {
+            configuration.icon.foregroundStyle(tint)
+            configuration.title
+        }
     }
 }
 
@@ -384,7 +244,7 @@ struct Metric: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
             Text(label).font(.system(size: 11)).foregroundStyle(.secondary)
-            Text(value).font(Theme.number(15, weight: .medium))
+            Text(value).font(Theme.number(16, weight: .semibold))
         }
     }
 }
@@ -392,7 +252,8 @@ struct Metric: View {
 struct EmptyNote: View {
     var text: String
     var body: some View {
-        Text(text).font(.system(size: 12.5)).foregroundStyle(.secondary).frame(maxWidth: .infinity, alignment: .leading)
+        Text(text).font(.system(size: 13)).foregroundStyle(.secondary).frame(maxWidth: .infinity, alignment: .leading)
+            .fixedSize(horizontal: false, vertical: true)
     }
 }
 
@@ -426,7 +287,7 @@ struct PowerSplitView: View {
             GeometryReader { proxy in
                 HStack(spacing: 2) {
                     if parts.isEmpty {
-                        Capsule().fill(Color.primary.opacity(0.08))
+                        Capsule().fill(Theme.track)
                     } else {
                         let sum = max(0.001, parts.reduce(0) { $0 + $1.1 })
                         ForEach(parts, id: \.0) { part in

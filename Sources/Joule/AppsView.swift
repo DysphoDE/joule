@@ -5,8 +5,8 @@ import SwiftUI
 
 struct AppsView: View {
     @EnvironmentObject private var monitor: Monitor
-    var period: Period
-    var batteryOnly: Bool
+    @AppStorage("appsPeriod") private var periodRaw = Period.today.rawValue
+    @AppStorage("batteryOnly") private var batteryOnly = false
     @ViewState private var report: Report?
     @ViewState private var selection: AppTotal.ID?
     @ViewState private var sortOrder = [KeyPathComparator(\AppTotal.joules, order: .reverse)]
@@ -25,6 +25,8 @@ struct AppsView: View {
         }
     }
 
+    private var period: Period { Period(rawValue: periodRaw) ?? .today }
+
     private var rows: [AppTotal] {
         guard let report else { return [] }
         return report.apps
@@ -34,28 +36,40 @@ struct AppsView: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
-            HStack {
+        VStack(alignment: .leading, spacing: 16) {
+            PageHeader(title: "Apps", tag: monitor.demo ? "Beispieldaten" : nil) {
+                Picker("Zeitraum", selection: $periodRaw) {
+                    ForEach(Period.allCases) { Text($0.title).tag($0.rawValue) }
+                }
+                .pickerStyle(.segmented).labelsHidden().fixedSize()
+                TextField("App suchen", text: $search)
+                    .textFieldStyle(.roundedBorder)
+                    .frame(width: 160)
+            }
+            HStack(spacing: 14) {
                 Picker("Art", selection: $filter) { ForEach(Filter.allCases) { Text($0.title).tag($0) } }
-                    .pickerStyle(.segmented).labelsHidden().frame(width: 260)
+                    .pickerStyle(.segmented).labelsHidden().fixedSize()
+                Toggle("Nur Akkubetrieb", isOn: $batteryOnly).toggleStyle(.checkbox).font(.system(size: 12))
                 Spacer()
                 if let report {
                     Text("\(rows.count) Einträge · zusammen \(Format.energy(rows.reduce(0) { $0 + $1.joules })) von \(Format.energy(report.totalJoules)) gesamt")
-                        .font(.system(size: 11.5)).foregroundStyle(.secondary)
+                        .font(.system(size: 12)).foregroundStyle(.secondary)
                 }
             }
-            .padding(.horizontal, 16).padding(.vertical, 10)
-            Divider()
             table
+                .scrollContentBackground(.hidden)
+                .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(Theme.glass))
+                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).strokeBorder(Color.primary.opacity(0.06)))
         }
-        .searchable(text: $search, placement: .toolbar, prompt: "App suchen")
+        .padding(.horizontal, 28).padding(.top, 24).padding(.bottom, 24)
         .inspector(isPresented: Binding(get: { selection != nil }, set: { if !$0 { selection = nil } })) {
             if let report, let total = report.apps.first(where: { $0.id == selection }) {
                 AppDetail(total: total, report: report, period: period, batteryOnly: batteryOnly)
                     .inspectorColumnWidth(min: 320, ideal: 360, max: 460)
             }
         }
-        .task(id: "\(period.rawValue)-\(batteryOnly)-\(monitor.revision)") {
+        .task(id: "\(periodRaw)-\(batteryOnly)-\(monitor.revision)") {
             report = try? monitor.store?.report(period.interval(), bucket: period.bucket, batteryOnly: batteryOnly)
         }
     }
@@ -74,7 +88,7 @@ struct AppsView: View {
             TableColumn("Energie", value: \.joules) { Text(($0.isEstimated ? "≈ " : "") + Format.energy($0.joules)).monospacedDigit() }
                 .width(min: 64, ideal: 72)
             TableColumn("Akku", value: \.joules) { total in
-                Text(Format.percent(report?.batteryPercent(total.joules) ?? 0, digits: 1)).monospacedDigit()
+                Text(Format.batteryShare(report?.batteryPercent(total.joules) ?? 0)).monospacedDigit()
             }
             .width(min: 50, ideal: 56)
             TableColumn("Anteil", value: \.joules) { total in

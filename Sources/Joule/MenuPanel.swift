@@ -38,7 +38,7 @@ struct MenuPanel: View {
                 PowerSplitView(total: power.systemWatts, split: monitor.liveSplit, compact: true)
             }
             Sparkline(points: monitor.recentPower).frame(height: 40)
-            Divider()
+            sessionBox
             apps
             sleepRow
             alertsRow
@@ -99,6 +99,30 @@ struct MenuPanel: View {
             }
             .frame(height: Self.rowHeight * CGFloat(Self.rows), alignment: .top)
         }
+    }
+
+    /// The session in two lines; fixed height so the panel never changes size.
+    private var sessionBox: some View {
+        Button { open(.now) } label: {
+            VStack(alignment: .leading, spacing: 3) {
+                if let session = monitor.currentSession, session.session.ongoing {
+                    Text("Seit dem Abstecken −\(Format.number(session.percentUsed, digits: 0)) %")
+                        .font(.system(size: 12, weight: .semibold))
+                    Text(Narrative.headline(session)).font(.system(size: 11.5)).foregroundStyle(.secondary).lineLimit(2)
+                } else if monitor.power?.source == .battery {
+                    Text("Akkubetrieb").font(.system(size: 12, weight: .semibold))
+                    Text("Die Aufschlüsselung erscheint nach dem ersten Prozent.").font(.system(size: 11.5)).foregroundStyle(.secondary).lineLimit(2)
+                } else {
+                    Text("Am Netzteil").font(.system(size: 12, weight: .semibold))
+                    Text("Sobald du absteckst, zeigt Joule, wohin der Akku fließt.").font(.system(size: 11.5)).foregroundStyle(.secondary).lineLimit(2)
+                }
+            }
+            .frame(maxWidth: .infinity, minHeight: 50, maxHeight: 50, alignment: .topLeading)
+            .padding(.horizontal, 12).padding(.vertical, 8)
+            .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Theme.accent.opacity(0.09)))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
     }
 
     private var sleepRow: some View {

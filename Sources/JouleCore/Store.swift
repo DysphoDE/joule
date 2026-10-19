@@ -113,6 +113,21 @@ public final class Store: @unchecked Sendable {
         for table in ["usage", "usage_hourly"] where try !columns(of: table).contains("estimated") {
             try db.execute("ALTER TABLE \(table) ADD COLUMN estimated REAL NOT NULL DEFAULT 0")
         }
+        try removeRowsSpanningSleep()
+    }
+
+    /// Up to 1.2, dark wakes during sleep stored intervals that spanned the sleep.
+    /// A power row overlapping a recorded sleep by more than a minute is not awake time.
+    private func removeRowsSpanningSleep() throws {
+        try db.execute("""
+            DELETE FROM power WHERE EXISTS (
+                SELECT 1 FROM sleeps s WHERE s.start < power.t - 60 AND s.end > power.t - power.dt + 60)
+            """)
+        // Warnings raised during those dark wakes describe sleep, not use.
+        try db.execute("""
+            DELETE FROM alerts WHERE kind IN ('appHog', 'backgroundHog', 'sleepBlocker', 'highDrain') AND EXISTS (
+                SELECT 1 FROM sleeps s WHERE s.start < alerts.t - 60 AND s.end > alerts.t + 60)
+            """)
     }
 
     private func columns(of table: String) throws -> Set<String> {

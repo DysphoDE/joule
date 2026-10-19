@@ -8,7 +8,7 @@ public enum Format {
     }
 
     public static func watts(_ value: Double) -> String {
-        value < 10 ? "\(number(value, digits: 1)) W" : "\(number(value, digits: 0)) W"
+        value < 10 ? "\(number(value, digits: 1))\u{00A0}W" : "\(number(value, digits: 0))\u{00A0}W"
     }
 
     /// For live per-app values, where "0,0 W" would look like a broken measurement.
@@ -27,12 +27,17 @@ public enum Format {
 
     public static func percent(_ value: Double, digits: Int = 0) -> String {
         if value > 0, value < 1, digits == 0 { return "< 1 %" }
-        return "\(number(value, digits: digits)) %"
+        return "\(number(value, digits: digits))\u{00A0}%"
+    }
+
+    /// Percent of a battery charge with one decimal; tiny values read "< 0,1 %" instead of "0,0 %".
+    public static func batteryShare(_ value: Double) -> String {
+        value > 0 && value < 0.05 ? "< 0,1 %" : percent(value, digits: 1)
     }
 
     public static func share(_ fraction: Double) -> String {
         if fraction > 0, fraction < 0.01 { return "< 1 %" }
-        return "\(number(fraction * 100, digits: 0)) %"
+        return "\(number(fraction * 100, digits: 0))\u{00A0}%"
     }
 
     /// "2 Std. 10 Min.", "45 Min.", "30 Sek."

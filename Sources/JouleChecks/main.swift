@@ -337,7 +337,7 @@ struct NarrativeTests {
         let text = Narrative.explain(breakdown, fullWh: 99, blockers: ["Claude"]).joined(separator: " ")
         expect(text.contains("hat dein Mac selbst gebraucht"))
         expect(text.contains("kaum eine Rolle"))
-        expect(text.contains("ChatGPT (0,4 %)"))
+        expect(text.contains("ChatGPT (0,4\u{00A0}%)"))
         expect(text.contains("gesperrt"))
         expect(text.contains("Claude"))
         expect(text.contains("Helligkeit"))
@@ -351,8 +351,58 @@ struct NarrativeTests {
             ShareEntry(kind: .hardware, name: "Display & Hardware", app: nil, joules: 0, percent: 8, estimated: false),
         ], sleepHours: 0, startsAtRecording: false, unrecordedSeconds: 0)
         let first = try require(Narrative.explain(breakdown, fullWh: 99).first)
-        expect(first == "Am meisten hat Steam verbraucht: 12 % – mehr als die Hälfte des Verlusts.")
+        expect(first == "Am meisten hat Steam verbraucht: 12\u{00A0}% – mehr als die Hälfte des Verlusts.")
         expect(Narrative.explain(SessionBreakdown(session: session(0.4), entries: [], sleepHours: 0, startsAtRecording: false, unrecordedSeconds: 0), fullWh: 99).isEmpty)
+    }
+}
+
+struct TimelineTests {
+    func lanesAndDayStrips() throws {
+        let store = try Store(url: FileManager.default.temporaryDirectory.appendingPathComponent("joule-timeline-\(UUID().uuidString).sqlite"))
+        let calendar = Calendar.current
+        let base = calendar.date(bySettingHour: 10, minute: 0, second: 0, of: Date().addingTimeInterval(-86400))!
+        let safari = "app:/Applications/Safari.app", chat = "app:/Applications/ChatGPT.app"
+        let fronts: [String?] = [safari, safari, safari, nil, chat, chat, Store.loginWindowKey, Store.loginWindowKey, safari, safari]
+        for (i, front) in fronts.enumerated() {
+            let start = base.addingTimeInterval(Double(i) * 60), end = start.addingTimeInterval(60)
+            try store.record(power: PowerSample(start: start, end: end, source: .battery, percent: 90 - Double(i), watts: 8,
+                                                remainingWh: 50, fullWh: 100, brightness: nil, frontmost: front), interval: nil)
+        }
+        try store.recordSleep(SleepRecord(start: base.addingTimeInterval(3600), end: base.addingTimeInterval(7200), percentBefore: 80, percentAfter: 79, onBattery: true))
+        let session = try require(try store.sessions(since: base.addingTimeInterval(-60)).first)
+        let timeline = try store.timeline(of: session)
+        expect(timeline.points.count == 10)
+        expect(timeline.lanes.first?.name == "Safari")
+        expect(timeline.lanes.first?.blocks.count == 2)
+        expect(timeline.lanes.first?.seconds == 300)
+        expect(timeline.lanes.last?.kind == .locked)
+        expect(timeline.lanes.last?.seconds == 120)
+
+        let strips = try store.dayStrips(DateInterval(start: calendar.startOfDay(for: base), end: calendar.startOfDay(for: base).addingTimeInterval(86400)))
+        let day = try require(strips.first)
+        expect(day.blocks.contains { $0.kind == .battery && $0.end.timeIntervalSince($0.start) == 600 })
+        expect(day.blocks.contains { $0.kind == .sleep })
+        expect(day.percentUsed == 9)
+    }
+}
+
+struct SleepCleanupTests {
+    func rowsSpanningSleepAreRemoved() throws {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("joule-sleep-\(UUID().uuidString).sqlite")
+        var store: Store? = try Store(url: url)
+        let base = Date().addingTimeInterval(-6 * 3600)
+        func sample(_ start: Date, _ end: Date) -> PowerSample {
+            PowerSample(start: start, end: end, source: .battery, percent: 80, watts: 0.2, remainingWh: 50, fullWh: 100, brightness: nil, frontmost: Store.loginWindowKey)
+        }
+        // Awake minute right before sleep, a dark-wake row spanning 40 minutes of it, the first minute after wake.
+        try store!.record(power: sample(base.addingTimeInterval(-60), base), interval: nil)
+        try store!.recordSleep(SleepRecord(start: base, end: base.addingTimeInterval(3 * 3600), percentBefore: 80, percentAfter: 79, onBattery: true))
+        try store!.record(power: sample(base.addingTimeInterval(10), base.addingTimeInterval(2400)), interval: nil)
+        try store!.record(power: sample(base.addingTimeInterval(3 * 3600), base.addingTimeInterval(3 * 3600 + 60)), interval: nil)
+        store = nil
+        let reopened = try Store(url: url)
+        let report = try reopened.report(DateInterval(start: base.addingTimeInterval(-3600), end: Date()), bucket: 3600, batteryOnly: false)
+        expect(report.recordedSeconds == 120)
     }
 }
 
@@ -404,5 +454,7 @@ run("EstimateTests.oldDatabaseIsMigratedWithoutLosingRows") { try EstimateTests(
 run("SessionShareTests.sharesAddUpToTheLostPercentage") { try SessionShareTests().sharesAddUpToTheLostPercentage() }
 run("NarrativeTests.explainsAScreenDominatedLockedSession") { try NarrativeTests().explainsAScreenDominatedLockedSession() }
 run("NarrativeTests.namesTheAppWhenOneDominates") { try NarrativeTests().namesTheAppWhenOneDominates() }
+run("TimelineTests.lanesAndDayStrips") { try TimelineTests().lanesAndDayStrips() }
+run("SleepCleanupTests.rowsSpanningSleepAreRemoved") { try SleepCleanupTests().rowsSpanningSleepAreRemoved() }
 print("")
 if failures.isEmpty { print("\(passedCount) Prüfungen bestanden.") } else { failures.forEach { print("FEHLER", $0) }; exit(1) }

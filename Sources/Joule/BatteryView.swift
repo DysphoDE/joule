@@ -7,30 +7,31 @@ struct BatteryView: View {
     @ViewState private var sessions: [DischargeSession] = []
     @ViewState private var sleeps: [SleepRecord] = []
     @ViewState private var selected: SessionBreakdown?
+    @ViewState private var selectedTimeline: SessionTimeline?
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                HStack(alignment: .top, spacing: 16) {
-                    HealthCard().frame(maxWidth: 460)
-                    SleepCard(sleeps: sleeps, threshold: monitor.settings.sleepPercentPerHour)
-                }
-                .fixedSize(horizontal: false, vertical: true)
-                SessionsCard(sessions: sessions, fullWh: monitor.power?.fullWh ?? 0) { session in
-                    selected = try? monitor.store?.breakdown(of: session)
-                }
+        PageScroll {
+            PageHeader(title: "Akku", tag: monitor.demo ? "Beispieldaten" : nil)
+            HStack(alignment: .top, spacing: 22) {
+                HealthCard()
+                SleepCard(sleeps: sleeps, threshold: monitor.settings.sleepPercentPerHour)
             }
-            .padding(24)
-            .frame(maxWidth: 1240)
-            .frame(maxWidth: .infinity)
+            .fixedSize(horizontal: false, vertical: true)
+            SessionsCard(sessions: sessions, fullWh: monitor.power?.fullWh ?? 0) { session in
+                guard let store = monitor.store else { return }
+                selectedTimeline = try? store.timeline(of: session)
+                selected = try? store.breakdown(of: session)
+            }
         }
         .sheet(item: $selected) { breakdown in
-            VStack(alignment: .trailing, spacing: 16) {
-                SessionBreakdownView(breakdown: breakdown, maxRows: 14, fullWh: monitor.power?.fullWh ?? 0)
-                Button("Fertig") { selected = nil }.keyboardShortcut(.defaultAction)
+            ScrollView {
+                VStack(alignment: .trailing, spacing: 16) {
+                    SessionBreakdownView(breakdown: breakdown, timeline: selectedTimeline, maxRows: 14, fullWh: monitor.power?.fullWh ?? 0)
+                    Button("Fertig") { selected = nil }.keyboardShortcut(.defaultAction)
+                }
+                .padding(26)
             }
-            .padding(24)
-            .frame(width: 620)
+            .frame(width: 720, height: 680)
         }
         .task(id: monitor.revision) {
             sessions = (try? monitor.store?.sessions(since: Date().addingTimeInterval(-14 * 86400))) ?? []
@@ -48,15 +49,17 @@ private struct HealthCard: View {
                 VStack(alignment: .leading, spacing: 18) {
                     SectionTitle(title: "Akkuzustand", subtitle: "Wie viel der ursprünglichen Kapazität noch da ist")
                     HStack(spacing: 24) {
-                        Gauge(value: power.healthPercent, in: 0...100) {
-                            EmptyView()
-                        } currentValueLabel: {
-                            Text(Format.percent(power.healthPercent)).font(Theme.number(20))
+                        ZStack {
+                            Circle().stroke(Theme.track, lineWidth: 14)
+                            Circle().trim(from: 0, to: power.healthPercent / 100)
+                                .stroke(power.healthPercent >= 80 ? Theme.charging : Theme.accent, style: StrokeStyle(lineWidth: 14, lineCap: .round))
+                                .rotationEffect(.degrees(-90))
+                            VStack(spacing: 0) {
+                                Text(Format.percent(power.healthPercent)).font(.system(size: 24, weight: .bold).monospacedDigit())
+                                Text("Zustand").font(.system(size: 11)).foregroundStyle(.secondary)
+                            }
                         }
-                        .gaugeStyle(.accessoryCircularCapacity)
-                        .tint(power.healthPercent >= 80 ? Theme.charging : Theme.accent)
-                        .scaleEffect(1.6)
-                        .frame(width: 96, height: 96)
+                        .frame(width: 132, height: 132)
                         VStack(alignment: .leading, spacing: 4) {
                             Text(verdict(power)).font(.system(size: 14, weight: .semibold))
                             Text("Volle Ladung heute \(Format.number(power.fullWh, digits: 0)) Wh, neu waren es \(Format.number(power.designWh, digits: 0)) Wh.")

@@ -3,8 +3,22 @@ import JouleCore
 import SwiftUI
 
 enum Theme {
-    /// Brand: warm amber, the colour of a glowing filament.
-    static let accent = Color(red: 0.96, green: 0.58, blue: 0.13)
+    /// Brand: warm amber, the colour of a glowing filament. Darker in light mode for contrast.
+    static let accent = dynamic(light: NSColor(srgbRed: 0.78, green: 0.41, blue: 0.04, alpha: 1),
+                                dark: NSColor(srgbRed: 1.0, green: 0.62, blue: 0.18, alpha: 1))
+    /// Frosted card on the translucent window.
+    static let glass = dynamic(light: NSColor(white: 1, alpha: 0.74), dark: NSColor(white: 0.16, alpha: 0.72))
+    static let glassEdge = dynamic(light: NSColor(white: 1, alpha: 0.85), dark: NSColor(white: 1, alpha: 0.10))
+    static let track = Color.primary.opacity(0.08)
+    /// Lanes in the timeline: distinct in lightness as well as hue.
+    static let lanes: [Color] = [Color(red: 0.18, green: 0.49, blue: 0.96),
+                                 dynamic(light: NSColor(srgbRed: 0.36, green: 0.36, blue: 0.40, alpha: 1), dark: NSColor(srgbRed: 0.68, green: 0.68, blue: 0.72, alpha: 1)),
+                                 Color(red: 0.85, green: 0.47, blue: 0.34)]
+    static let locked = Color(nsColor: .tertiaryLabelColor)
+
+    static func dynamic(light: NSColor, dark: NSColor) -> Color {
+        Color(nsColor: NSColor(name: nil) { $0.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? dark : light })
+    }
     static let apps = Color(red: 0.36, green: 0.42, blue: 0.96)
     static let services = Color(red: 0.13, green: 0.68, blue: 0.66)
     static let hardware = Color(nsColor: .tertiaryLabelColor)
@@ -22,16 +36,78 @@ enum Theme {
     }
 }
 
+/// Frosted glass card: translucent fill, a bright top edge and a soft shadow.
 struct Card<Content: View>: View {
-    var padding: CGFloat = 18
+    var padding: CGFloat = 20
     @ViewBuilder var content: Content
 
     var body: some View {
         content
             .padding(padding)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-            .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(Color(nsColor: .controlBackgroundColor)))
-            .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(Color.primary.opacity(0.07)))
+            .background(RoundedRectangle(cornerRadius: 18, style: .continuous).fill(Theme.glass))
+            .overlay(
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .strokeBorder(LinearGradient(colors: [Theme.glassEdge, Theme.glassEdge.opacity(0)], startPoint: .top, endPoint: .center), lineWidth: 1)
+            )
+            .shadow(color: .black.opacity(0.07), radius: 3, y: 1)
+    }
+}
+
+/// The desktop shows through the window, blurred – the ground every page sits on.
+struct WindowGlass: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSVisualEffectView {
+        let view = NSVisualEffectView()
+        view.material = .underWindowBackground
+        view.blendingMode = .behindWindow
+        view.state = .followsWindowActiveState
+        return view
+    }
+
+    func updateNSView(_ view: NSVisualEffectView, context: Context) {}
+}
+
+/// Page title row with optional trailing controls.
+struct PageHeader<Trailing: View>: View {
+    var title: String
+    var tag: String?
+    @ViewBuilder var trailing: Trailing
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 12) {
+            Text(title).font(.system(size: 30, weight: .bold)).tracking(-0.4)
+            if let tag { Pill(text: tag) }
+            Spacer(minLength: 12)
+            trailing
+        }
+    }
+}
+
+extension PageHeader where Trailing == EmptyView {
+    init(title: String, tag: String? = nil) {
+        self.init(title: title, tag: tag) { EmptyView() }
+    }
+}
+
+/// A grouped, inset list in the style of System Settings.
+struct GroupedList<Content: View>: View {
+    @ViewBuilder var content: Content
+    var body: some View {
+        VStack(spacing: 0) { content }
+            .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Theme.glass))
+            .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).strokeBorder(Color.primary.opacity(0.05)))
+    }
+}
+
+/// Apps get their real icon; anything else a tinted symbol tile.
+struct SymbolTile: View {
+    var symbol: String
+    var tint: Color
+    var size: CGFloat = 26
+    var body: some View {
+        RoundedRectangle(cornerRadius: size * 0.27, style: .continuous).fill(tint.opacity(0.15))
+            .frame(width: size, height: size)
+            .overlay(Image(systemName: symbol).font(.system(size: size * 0.46, weight: .semibold)).foregroundStyle(tint))
     }
 }
 

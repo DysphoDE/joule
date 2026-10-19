@@ -69,6 +69,7 @@ final class Monitor: ObservableObject {
     @Published private(set) var today: Report?
     /// The running (or last) discharge session split into what used the battery.
     @Published private(set) var currentSession: SessionBreakdown?
+    @Published private(set) var currentTimeline: SessionTimeline?
     @Published private(set) var unreadAlerts = 0
     @Published private(set) var brightness: Double?
     @Published private(set) var errorMessage: String?
@@ -100,6 +101,8 @@ final class Monitor: ObservableObject {
     private var warnings: WarningEngine
     private var readings: [PowerReading] = []
     private var intervalStart = Date()
+    /// Mach clocks at the interval start: if continuous time ran ahead of awake time, the Mac slept.
+    private var intervalClock = (continuous: Clock.continuous(), awake: Clock.awake())
     private var sleepStart: (date: Date, percent: Double, battery: Bool)?
     private var timers: [Timer] = []
     private var liveTimer: Timer?
@@ -141,6 +144,7 @@ final class Monitor: ObservableObject {
         readPower()
         if !demo {
             intervalStart = Date()
+            intervalClock = (Clock.continuous(), Clock.awake())
             _ = recordAccountant.ingest(.capture())
         }
         schedule(every: Self.powerInterval) { $0.readPower() }
@@ -261,8 +265,20 @@ final class Monitor: ObservableObject {
         guard store != nil, let last = readings.last ?? latest, !commitRunning else { return }
         let now = Date()
         let taken = readings, start = intervalStart
+        let continuous = Clock.continuous(), awake = Clock.awake()
+        let slept = (continuous - intervalClock.continuous) - (awake - intervalClock.awake) > 20
         readings.removeAll()
         intervalStart = now
+        intervalClock = (continuous, awake)
+        // A dark wake (Power Nap) fires our timers without a wake notification. The interval
+        // since the last sample was mostly sleep: storing it would count sleep as awake time.
+        if slept {
+            // Sleep is not "kept awake for 3 hours": blocker timers and averages start over.
+            warnings.reset()
+            recordAccountant.reset()
+            _ = recordAccountant.ingest(.capture())
+            return
+        }
         if sync {
             finishCommit(.capture(), readings: taken, start: start, end: now, last: last)
         } else {
@@ -352,8 +368,10 @@ final class Monitor: ObservableObject {
         today = try? store.report(Period.today.interval(), bucket: Period.today.bucket, batteryOnly: false)
         if let session = (try? store.sessions(since: Date().addingTimeInterval(-3 * 86400)))?.first {
             currentSession = try? store.breakdown(of: session)
+            currentTimeline = try? store.timeline(of: session)
         } else {
             currentSession = nil
+            currentTimeline = nil
         }
         unreadAlerts = unreadCount
         revision += 1
@@ -376,6 +394,17 @@ final class Monitor: ObservableObject {
         unreadAlerts = 0
         unreadCount = 0
         menu.update(power: latest, unread: 0)
+    }
+
+    func isRunning(_ app: AppIdentity) -> Bool {
+        guard let path = app.bundlePath else { return false }
+        return NSWorkspace.shared.runningApplications.contains { $0.bundleURL?.path == path }
+    }
+
+    /// Asks the app to quit normally (it may still ask to save documents).
+    func quit(_ app: AppIdentity) {
+        guard let path = app.bundlePath else { return }
+        NSWorkspace.shared.runningApplications.filter { $0.bundleURL?.path == path }.forEach { $0.terminate() }
     }
 
     func mute(_ key: String) {
@@ -426,6 +455,7 @@ final class Monitor: ObservableObject {
         warnings.reset()
         readings.removeAll()
         intervalStart = Date()
+        intervalClock = (Clock.continuous(), Clock.awake())
         _ = recordAccountant.ingest(.capture())
         if liveTimer != nil { _ = liveAccountant.ingest(.capture()) }
         guard let start = sleepStart, let now = PowerProbe.read() else { return }

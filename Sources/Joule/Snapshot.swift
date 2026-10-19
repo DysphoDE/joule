@@ -15,6 +15,9 @@ enum Snapshot {
         NSApp.appearance = appearance
         Task { @MainActor in
             try? await Task.sleep(for: .seconds(2.5))
+            if let window = NSApp.windows.first(where: { $0.identifier?.rawValue.contains("main") == true }) {
+                window.setFrame(NSRect(x: 40, y: 40, width: 1280, height: 1180), display: true)
+            }
             for page in Page.allCases {
                 UserDefaults.standard.set(page.rawValue, forKey: "page")
                 try? await Task.sleep(for: .seconds(1.8))
