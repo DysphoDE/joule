@@ -69,8 +69,8 @@ struct WindowGlass: NSViewRepresentable {
 
 /// Page title row with optional trailing controls.
 struct PageHeader<Trailing: View>: View {
-    var title: String
-    var tag: String?
+    var title: LocalizedStringKey
+    var tag: LocalizedStringKey?
     @ViewBuilder var trailing: Trailing
 
     var body: some View {
@@ -84,7 +84,7 @@ struct PageHeader<Trailing: View>: View {
 }
 
 extension PageHeader where Trailing == EmptyView {
-    init(title: String, tag: String? = nil) {
+    init(title: LocalizedStringKey, tag: LocalizedStringKey? = nil) {
         self.init(title: title, tag: tag) { EmptyView() }
     }
 }
@@ -112,8 +112,8 @@ struct SymbolTile: View {
 }
 
 struct SectionTitle: View {
-    var title: String
-    var subtitle: String?
+    var title: LocalizedStringKey
+    var subtitle: LocalizedStringKey?
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
             Text(title).font(.system(size: 14, weight: .semibold))
@@ -159,9 +159,9 @@ final class IconCache {
 extension AppCategory {
     var label: String {
         switch self {
-        case .app: "App"
-        case .system: "macOS-Dienst"
-        case .tool: "Befehlszeilen-Programm"
+        case .app: String(localized: "App")
+        case .system: String(localized: "macOS-Dienst")
+        case .tool: String(localized: "Befehlszeilen-Programm")
         }
     }
 }
@@ -203,7 +203,7 @@ struct BatteryGlyph: View {
 }
 
 struct Pill: View {
-    var text: String
+    var text: LocalizedStringKey
     var color: Color = .secondary
     var body: some View {
         Text(text)
@@ -218,22 +218,22 @@ struct Pill: View {
 extension PowerReading {
     var shortStateText: String {
         switch source {
-        case .battery: minutesToEmpty.map { "Akku · noch \(Format.duration(Double($0) * 60, short: true))" } ?? "Akkubetrieb"
-        case .charging: minutesToFull.map { "Lädt · voll in \(Format.duration(Double($0) * 60, short: true))" } ?? "Lädt"
-        case .adapter: "Am Netzteil"
+        case .battery: minutesToEmpty.map { String(localized: "Akku · noch \(Format.duration(Double($0) * 60, short: true))") } ?? String(localized: "Akkubetrieb")
+        case .charging: minutesToFull.map { String(localized: "Lädt · voll in \(Format.duration(Double($0) * 60, short: true))") } ?? String(localized: "Lädt")
+        case .adapter: String(localized: "Am Netzteil")
         }
     }
 
     var stateText: String {
         switch source {
         case .battery:
-            if let minutes = minutesToEmpty { return "Akkubetrieb · noch ca. \(Format.duration(Double(minutes) * 60))" }
-            return "Akkubetrieb"
+            if let minutes = minutesToEmpty { return String(localized: "Akkubetrieb · noch ca. \(Format.duration(Double(minutes) * 60))") }
+            return String(localized: "Akkubetrieb")
         case .charging:
-            if let minutes = minutesToFull { return "Lädt · voll in ca. \(Format.duration(Double(minutes) * 60))" }
-            return "Lädt"
+            if let minutes = minutesToFull { return String(localized: "Lädt · voll in ca. \(Format.duration(Double(minutes) * 60))") }
+            return String(localized: "Lädt")
         case .adapter:
-            return "Am Netzteil · nicht am Laden"
+            return String(localized: "Am Netzteil · nicht am Laden")
         }
     }
 }

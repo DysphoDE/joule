@@ -5,7 +5,7 @@ enum Page: String, CaseIterable, Identifiable {
     case now, history, apps, battery, alerts
     var id: String { rawValue }
 
-    var title: String {
+    var title: LocalizedStringKey {
         switch self {
         case .now: "Jetzt"
         case .history: "Verlauf"
@@ -88,6 +88,7 @@ struct NavBar: View {
         }
         .padding(3)
         .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Color.primary.opacity(0.07)))
+        .fixedSize()
         .animation(.snappy(duration: 0.2), value: selection)
     }
 }

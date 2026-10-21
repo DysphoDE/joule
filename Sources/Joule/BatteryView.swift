@@ -71,21 +71,21 @@ private struct HealthCard: View {
                         Metric(label: "Ladezyklen", value: "\(power.cycleCount)")
                         Metric(label: "Spannung", value: "\(Format.number(power.voltage, digits: 2)) V")
                         if let temperature = power.temperatureC, temperature > 0 { Metric(label: "Temperatur", value: "\(Format.number(temperature)) °C") }
-                        Metric(label: "Akku-Fluss", value: Format.watts(abs(power.batteryWatts)) + (power.batteryWatts > 0.2 ? " rein" : (power.batteryWatts < -0.2 ? " raus" : "")))
+                        Metric(label: "Akku-Fluss", value: power.batteryWatts > 0.2 ? String(localized: "\(Format.watts(power.batteryWatts)) rein") : (power.batteryWatts < -0.2 ? String(localized: "\(Format.watts(-power.batteryWatts)) raus") : Format.watts(0)))
                     }
                 }
             } else {
-                EmptyNote(text: "Kein Akku gefunden.")
+                EmptyNote("Kein Akku gefunden.")
             }
         }
     }
 
     private func verdict(_ power: PowerReading) -> String {
         switch power.healthPercent {
-        case 90...: "Wie neu"
-        case 80..<90: "Gut in Form"
-        case 70..<80: "Spürbar gealtert"
-        default: "Austausch erwägen"
+        case 90...: String(localized: "Wie neu")
+        case 80..<90: String(localized: "Gut in Form")
+        case 70..<80: String(localized: "Spürbar gealtert")
+        default: String(localized: "Austausch erwägen")
         }
     }
 }
@@ -99,7 +99,7 @@ private struct SleepCard: View {
             VStack(alignment: .leading, spacing: 12) {
                 SectionTitle(title: "Ruhezustand", subtitle: "Verlust pro Stunde, während der Mac zugeklappt war")
                 if sleeps.isEmpty {
-                    EmptyNote(text: "Sobald dein Mac einmal länger als eine halbe Stunde geschlafen hat, erscheint er hier.")
+                    EmptyNote("Sobald dein Mac einmal länger als eine halbe Stunde geschlafen hat, erscheint er hier.")
                     Spacer(minLength: 0)
                 } else {
                     Chart(sleeps) { sleep in
@@ -133,7 +133,7 @@ private struct SessionsCard: View {
             VStack(alignment: .leading, spacing: 12) {
                 SectionTitle(title: "Akkusitzungen", subtitle: "Jede Zeit ohne Netzteil – wie weit du mit einer Ladung kommst")
                 if sessions.isEmpty {
-                    EmptyNote(text: "Noch keine Akkusitzung aufgezeichnet. Zieh das Netzteil ab, dann geht's los.")
+                    EmptyNote("Noch keine Akkusitzung aufgezeichnet. Zieh das Netzteil ab, dann geht's los.")
                 } else {
                     Grid(alignment: .leading, horizontalSpacing: 18, verticalSpacing: 10) {
                         GridRow {
@@ -145,13 +145,13 @@ private struct SessionsCard: View {
                             GridRow {
                                 VStack(alignment: .leading, spacing: 1) {
                                     Text(Format.dayTime(session.start)).font(.system(size: 12.5, weight: .medium))
-                                    Text(session.ongoing ? "läuft noch" : "bis \(Format.time(session.end))").font(.system(size: 11)).foregroundStyle(.secondary)
+                                    Text(session.ongoing ? String(localized: "läuft noch") : String(localized: "bis \(Format.time(session.end))")).font(.system(size: 11)).foregroundStyle(.secondary)
                                 }
                                 Text("\(Format.number(session.percentStart, digits: 0)) → \(Format.number(session.percentEnd, digits: 0)) %").monospacedDigit()
                                 RangeBar(from: session.percentEnd, to: session.percentStart).frame(width: 160, height: 8)
                                 Text(Format.duration(session.awakeSeconds, short: true)).monospacedDigit()
                                 Text(Format.watts(session.averageWatts)).monospacedDigit()
-                                Text(session.averageWatts > 0 && fullWh > 0 ? "\(Format.duration(fullWh / session.averageWatts * 3600, short: true)) pro Ladung" : "–")
+                                Text(session.averageWatts > 0 && fullWh > 0 ? String(localized: "\(Format.duration(fullWh / session.averageWatts * 3600, short: true)) pro Ladung") : "–")
                                     .monospacedDigit().foregroundStyle(.secondary)
                                 Button("Wohin?") { open(session) }.buttonStyle(.link)
                                     .help("Zeigt, was die Prozente dieser Sitzung verbraucht hat")

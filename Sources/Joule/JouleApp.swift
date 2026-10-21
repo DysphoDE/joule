@@ -42,7 +42,7 @@ struct JouleApp: App {
 enum MenuBarStyle: String, CaseIterable, Identifiable {
     case watts, percent, both, icon
     var id: String { rawValue }
-    var title: String {
+    var title: LocalizedStringKey {
         switch self {
         case .watts: "Leistung (W)"
         case .percent: "Akkustand (%)"

@@ -14,14 +14,14 @@ struct SessionBreakdownView: View {
 
     private var heading: String {
         let used = Format.number(breakdown.percentUsed, digits: 0)
-        return session.ongoing ? "Wohin sind die \(used) % geflossen?" : "\(used) % in dieser Sitzung"
+        return session.ongoing ? String(localized: "Wohin sind die \(used) % geflossen?") : String(localized: "\(used) % in dieser Sitzung")
     }
 
     private var since: String {
         let start = Format.dayTime(session.start)
         let range = "\(Format.number(session.percentStart, digits: 0)) % → \(Format.number(session.percentEnd, digits: 0)) %"
-        if breakdown.startsAtRecording { return "Seit Aufzeichnungsbeginn · \(start) · \(range)" }
-        return session.ongoing ? "Seit dem Abstecken · \(start) · \(range)" : "\(start) bis \(Format.time(session.end)) · \(range)"
+        if breakdown.startsAtRecording { return String(localized: "Seit Aufzeichnungsbeginn · \(start) · \(range)") }
+        return session.ongoing ? String(localized: "Seit dem Abstecken · \(start) · \(range)") : String(localized: "\(start) bis \(Format.time(session.end)) · \(range)")
     }
 
     var body: some View {
@@ -35,7 +35,7 @@ struct SessionBreakdownView: View {
                 if let showAll { Button("Alle Sitzungen", action: showAll).buttonStyle(.link) }
             }
             if breakdown.percentUsed < 1 {
-                EmptyNote(text: "Seit dem Abstecken ist noch kein volles Prozent verbraucht. Sobald der Akku sinkt, siehst du hier, wer es war.")
+                EmptyNote("Seit dem Abstecken ist noch kein volles Prozent verbraucht. Sobald der Akku sinkt, siehst du hier, wer es war.")
             } else {
                 let sentences = Narrative.explain(breakdown, fullWh: fullWh, blockers: blockers)
                 if !sentences.isEmpty {
@@ -67,13 +67,13 @@ struct SessionBreakdownView: View {
     }
 
     private var footnote: String {
-        var parts = ["Verteilt nach gemessener Energie im Akkubetrieb."]
-        if breakdown.sleepHours > 0.05 { parts.append("Ruhezustand: \(Format.duration(breakdown.sleepHours * 3600)).") }
+        var parts = [String(localized: "Verteilt nach gemessener Energie im Akkubetrieb.")]
+        if breakdown.sleepHours > 0.05 { parts.append(String(localized: "Ruhezustand: \(Format.duration(breakdown.sleepHours * 3600)).")) }
         if breakdown.startsAtRecording && session.percentStart < 99.5 {
-            parts.append("Was vor \(Format.number(session.percentStart, digits: 0)) % passiert ist, hat Joule nicht gesehen.")
+            parts.append(String(localized: "Was vor \(Format.number(session.percentStart, digits: 0)) % passiert ist, hat Joule nicht gesehen."))
         }
         if breakdown.unrecordedSeconds > 300 {
-            parts.append("\(Format.duration(breakdown.unrecordedSeconds)) ohne Aufzeichnung sind anteilig mitverteilt.")
+            parts.append(String(localized: "\(Format.duration(breakdown.unrecordedSeconds)) ohne Aufzeichnung sind anteilig mitverteilt."))
         }
         // Durations end in "Min." / "Std." – no double full stop.
         return parts.joined(separator: " ").replacingOccurrences(of: "..", with: ".")
@@ -123,7 +123,7 @@ struct SessionTimelineView: View {
                     }
                     .frame(height: 16)
                 }
-                .help("\(lane.name): \(Format.duration(lane.seconds)) \(lane.kind == .locked ? "gesperrt, aber wach" : "im Vordergrund")")
+                .help(lane.kind == .locked ? String(localized: "\(lane.name): \(Format.duration(lane.seconds)) gesperrt, aber wach") : String(localized: "\(lane.name): \(Format.duration(lane.seconds)) im Vordergrund"))
             }
             HStack(spacing: 14) {
                 Color.clear.frame(width: labelWidth, height: 1)
@@ -189,7 +189,7 @@ struct SessionTimelineView: View {
                 .offset(x: min(size.width - 36, x(points.last!.date, size.width) - 30), y: py(points.last!.percent) + 6)
         }
         .accessibilityElement()
-        .accessibilityLabel("Akku von \(Format.percent(points[0].percent)) auf \(Format.percent(points.last!.percent)), Leistung bis \(Format.watts(maxWatts))")
+        .accessibilityLabel(String(localized: "Akku von \(Format.percent(points[0].percent)) auf \(Format.percent(points.last!.percent)), Leistung bis \(Format.watts(maxWatts))"))
     }
 }
 

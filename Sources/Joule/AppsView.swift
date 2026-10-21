@@ -16,7 +16,7 @@ struct AppsView: View {
     enum Filter: String, CaseIterable, Identifiable {
         case all, apps, system
         var id: String { rawValue }
-        var title: String {
+        var title: LocalizedStringKey {
             switch self {
             case .all: "Alle"
             case .apps: "Apps"
@@ -164,7 +164,7 @@ struct AppDetail: View {
                 Grid(alignment: .leading, horizontalSpacing: 24, verticalSpacing: 12) {
                     GridRow {
                         Metric(label: "Energie", value: Format.energy(total.joules))
-                        Metric(label: "Akku", value: Format.percent(report.batteryPercent(total.joules), digits: 1))
+                        Metric(label: "Akku", value: Format.batteryShare(report.batteryPercent(total.joules)))
                     }
                     GridRow {
                         Metric(label: "Ø Leistung", value: Format.watts(total.averageWatts))
@@ -181,7 +181,7 @@ struct AppDetail: View {
                 }
 
                 VStack(alignment: .leading, spacing: 8) {
-                    SectionTitle(title: "Verlauf", subtitle: period.title)
+                    SectionTitle(title: "Verlauf", subtitle: "\(period.title)")
                     Chart(series, id: \.0) { item in
                         BarMark(x: .value("Zeit", item.0, unit: period == .month ? .day : (period == .week ? .hour : .minute)),
                                 y: .value("Wh", item.1 / 3600))
@@ -235,13 +235,13 @@ struct AppDetail: View {
 
     private var explanation: String {
         if total.isEstimated {
-            var text = "Diesen Prozess darf Joule ohne Administratorrechte nicht direkt messen. Seine Prozessorzeit liest Joule über das Systemwerkzeug ps; die Energie ist daraus geschätzt – mit dem Verbrauch pro Prozessorsekunde, den die messbaren Prozesse im selben Moment hatten. Läuft er vor allem auf den schnellen Kernen, liegt der echte Wert eher etwas höher."
-            if total.app.name == "WindowServer" { text += " WindowServer setzt alles zusammen, was du auf dem Bildschirm siehst – Animationen, Videos und viele offene Fenster lassen ihn arbeiten." }
+            var text = String(localized: "Diesen Prozess darf Joule ohne Administratorrechte nicht direkt messen. Seine Prozessorzeit liest Joule über das Systemwerkzeug ps; die Energie ist daraus geschätzt – mit dem Verbrauch pro Prozessorsekunde, den die messbaren Prozesse im selben Moment hatten. Läuft er vor allem auf den schnellen Kernen, liegt der echte Wert eher etwas höher.")
+            if total.app.name == "WindowServer" { text += " " + String(localized: "WindowServer setzt alles zusammen, was du auf dem Bildschirm siehst – Animationen, Videos und viele offene Fenster lassen ihn arbeiten.") }
             return text
         }
-        var text = "Gemessen wird die Energie, die der Prozessor für diese App aufwendet – inklusive Helfer-Prozesse und Dienste, die macOS ihr zuordnet."
-        if total.gpuSeconds >= 1 { text += " Grafikarbeit (GPU-Zeit) steckt im Anteil „Display & Hardware“." }
-        if total.wakeupsPerSecond > 100 { text += " Viele Weckrufe halten den Prozessor aus dem Stromsparmodus – das kostet auch im Leerlauf Akku." }
+        var text = String(localized: "Gemessen wird die Energie, die der Prozessor für diese App aufwendet – inklusive Helfer-Prozesse und Dienste, die macOS ihr zuordnet.")
+        if total.gpuSeconds >= 1 { text += " " + String(localized: "Grafikarbeit (GPU-Zeit) steckt im Anteil „Display & Hardware“.") }
+        if total.wakeupsPerSecond > 100 { text += " " + String(localized: "Viele Weckrufe halten den Prozessor aus dem Stromsparmodus – das kostet auch im Leerlauf Akku.") }
         return text
     }
 }

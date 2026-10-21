@@ -10,7 +10,7 @@ struct AlertsView: View {
     enum Filter: String, CaseIterable, Identifiable {
         case all, apps, sleep, drain
         var id: String { rawValue }
-        var title: String {
+        var title: LocalizedStringKey {
             switch self {
             case .all: "Alle"
             case .apps: "Apps"
@@ -33,7 +33,7 @@ struct AlertsView: View {
         let calendar = Calendar.current
         let groups = Dictionary(grouping: alerts.filter { filter.matches($0.kind) }) { calendar.startOfDay(for: $0.date) }
         return groups.keys.sorted(by: >).map { day in
-            let title = calendar.isDateInToday(day) ? "Heute" : (calendar.isDateInYesterday(day) ? "Gestern" : day.formatted(.dateTime.weekday(.wide).day().month(.wide)))
+            let title = calendar.isDateInToday(day) ? String(localized: "Heute") : (calendar.isDateInYesterday(day) ? String(localized: "Gestern") : day.formatted(Date.FormatStyle().locale(Format.locale).weekday(.wide).day().month(.wide)))
             return (title, groups[day]!)
         }
     }

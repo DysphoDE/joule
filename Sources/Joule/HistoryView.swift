@@ -22,11 +22,11 @@ struct HistoryView: View {
             }
             if let report {
                 if report.isEmpty {
-                    Card { EmptyNote(text: batteryOnly ? "In diesem Zeitraum lief der Mac nicht auf Akku." : "Für diesen Zeitraum gibt es noch keine Aufzeichnung.") }
+                    Card { EmptyNote(text: batteryOnly ? String(localized: "In diesem Zeitraum lief der Mac nicht auf Akku.") : String(localized: "Für diesen Zeitraum gibt es noch keine Aufzeichnung.")) }
                 } else {
                     summary(report)
                     if period == .week || period == .month {
-                        DayStripsCard(days: days, title: period == .week ? "Die Woche" : "Die letzten 30 Tage")
+                        DayStripsCard(days: days, title: period == .week ? String(localized: "Die Woche") : String(localized: "Die letzten 30 Tage"))
                     } else {
                         BatteryChart(report: report, period: period)
                         PowerChart(report: report, period: period)
@@ -52,11 +52,11 @@ struct HistoryView: View {
         let charges = report.batteryPercent(report.totalJoules)
         return HStack(spacing: 14) {
             StatTile(label: "Energie", value: Format.energy(report.totalJoules),
-                     detail: charges < 100 ? "\(Format.percent(charges)) einer Akkuladung" : "≈ \(Format.number(charges / 100)) volle Akkuladungen")
-            StatTile(label: "Akku verbraucht", value: Format.percent(report.percentUsed), detail: "im Akkubetrieb, ohne Ruhezustand")
-            StatTile(label: "Ø Leistung", value: Format.watts(report.averageWatts), detail: "während der Mac wach war")
+                     detail: charges < 100 ? String(localized: "\(Format.percent(charges)) einer Akkuladung") : String(localized: "≈ \(Format.number(charges / 100)) volle Akkuladungen"))
+            StatTile(label: "Akku verbraucht", value: Format.percent(report.percentUsed), detail: String(localized: "im Akkubetrieb, ohne Ruhezustand"))
+            StatTile(label: "Ø Leistung", value: Format.watts(report.averageWatts), detail: String(localized: "während der Mac wach war"))
             StatTile(label: "Erfasst", value: Format.duration(report.recordedSeconds, short: true),
-                     detail: "davon \(Format.duration(report.batterySeconds, short: true)) auf Akku")
+                     detail: String(localized: "davon \(Format.duration(report.batterySeconds, short: true)) auf Akku"))
         }
     }
 }
@@ -77,7 +77,7 @@ private struct DayStripsCard: View {
                 VStack(spacing: 9) {
                     ForEach(days) { day in
                         HStack(spacing: 14) {
-                            Text(day.day.formatted(.dateTime.weekday(.abbreviated).day()))
+                            Text(Format.day(day.day))
                                 .font(.system(size: 13, weight: Calendar.current.isDateInToday(day.day) ? .semibold : .regular))
                                 .frame(width: 70, alignment: .leading)
                             GeometryReader { proxy in
@@ -101,8 +101,8 @@ private struct DayStripsCard: View {
                 HStack(spacing: 14) {
                     Color.clear.frame(width: 70, height: 1)
                     HStack {
-                        ForEach(["0 Uhr", "6", "12", "18", "24"], id: \.self) { label in
-                            if label != "0 Uhr" { Spacer() }
+                        ForEach(Array([String(localized: "0 Uhr"), "6", "12", "18", "24"].enumerated()), id: \.offset) { index, label in
+                            if index > 0 { Spacer() }
                             Text(label)
                         }
                     }
@@ -128,9 +128,9 @@ private struct EnergySplitCard: View {
     var report: Report
 
     var body: some View {
-        let parts: [(String, Double, Color)] = [("Apps", report.breakdown.apps, Theme.apps),
-                                                 ("macOS-Dienste", report.breakdown.services, Theme.services),
-                                                 ("Display & Hardware", report.breakdown.hardware, Theme.hardware)]
+        let parts: [(String, Double, Color)] = [(String(localized: "Apps"), report.breakdown.apps, Theme.apps),
+                                                 (String(localized: "macOS-Dienste"), report.breakdown.services, Theme.services),
+                                                 (String(localized: "Display & Hardware"), report.breakdown.hardware, Theme.hardware)]
         Card {
             VStack(alignment: .leading, spacing: 14) {
                 Text("Wohin die Energie ging").font(.system(size: 15, weight: .semibold))
@@ -164,9 +164,9 @@ private struct EnergySplitCard: View {
         let hardware = report.share(report.breakdown.hardware)
         let top = report.apps.first { $0.app.category == .app }
         var text = hardware >= 0.5
-            ? "Mehr als die Hälfte hat der Mac selbst gebraucht – vor allem Bildschirm und Grafik."
-            : "Deine Apps und Dienste machten zusammen \(Format.share(1 - hardware)) aus."
-        if let top { text += " Größte App: \(top.app.name) mit \(Format.energy(top.joules))." }
+            ? String(localized: "Mehr als die Hälfte hat der Mac selbst gebraucht – vor allem Bildschirm und Grafik.")
+            : String(localized: "Deine Apps und Dienste machten zusammen \(Format.share(1 - hardware)) aus.")
+        if let top { text += " " + String(localized: "Größte App: \(top.app.name) mit \(Format.energy(top.joules)).") }
         return text
     }
 }
@@ -253,9 +253,9 @@ struct PowerChart: View {
                     if let bucket = selectedBucket {
                         HStack(spacing: 14) {
                             Text(bucket.start.formatted(.dateTime.weekday(.abbreviated).hour().minute())).foregroundStyle(.secondary)
-                            readout("Apps", bucket.watts(\.apps), Theme.apps)
-                            readout("Dienste", bucket.watts(\.services), Theme.services)
-                            readout("Hardware", bucket.watts(\.hardware), .secondary)
+                            readout(String(localized: "Apps"), bucket.watts(\.apps), Theme.apps)
+                            readout(String(localized: "Dienste"), bucket.watts(\.services), Theme.services)
+                            readout(String(localized: "Hardware"), bucket.watts(\.hardware), .secondary)
                             Text(Format.watts(bucket.watts)).font(Theme.number(13))
                         }
                         .font(.system(size: 11.5))
@@ -289,10 +289,10 @@ struct PowerChart: View {
 
     private var bucketName: String {
         switch period {
-        case .hour: "2 Minuten"
-        case .today, .day: "Viertelstunde"
-        case .week: "3 Stunden"
-        case .month: "Tag"
+        case .hour: String(localized: "2 Minuten")
+        case .today, .day: String(localized: "Viertelstunde")
+        case .week: String(localized: "3 Stunden")
+        case .month: String(localized: "Tag")
         }
     }
 
@@ -316,10 +316,10 @@ func timeAxis(_ period: Period) -> some AxisContent {
 }
 
 struct Legend: View {
-    var items: [(String, Color)]
+    var items: [(LocalizedStringKey, Color)]
     var body: some View {
         HStack(spacing: 12) {
-            ForEach(items, id: \.0) { item in
+            ForEach(Array(items.enumerated()), id: \.offset) { _, item in
                 HStack(spacing: 5) {
                     RoundedRectangle(cornerRadius: 2).fill(item.1).frame(width: 9, height: 9)
                     Text(item.0)

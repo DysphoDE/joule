@@ -1,3 +1,5 @@
 .build/
 /Joule.app
 *.sqlite*
+dist/
+.DS_Store

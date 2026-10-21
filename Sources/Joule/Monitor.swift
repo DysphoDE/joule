@@ -132,7 +132,7 @@ final class Monitor: ObservableObject {
             }
         } catch {
             store = nil
-            errorMessage = "Verlauf kann nicht gespeichert werden: \(error)"
+            errorMessage = String(localized: "Verlauf kann nicht gespeichert werden: \(String(describing: error))")
         }
     }
 
@@ -229,7 +229,7 @@ final class Monitor: ObservableObject {
     }
 
     private func publishLive() {
-        latestBrightness = DisplayProbe.brightness()
+        latestBrightness = demo ? 0.6 : DisplayProbe.brightness()
         power = latest
         brightness = latestBrightness
         recentPower = powerBuffer
@@ -238,7 +238,7 @@ final class Monitor: ObservableObject {
     // MARK: Recording
 
     private func readPower() {
-        guard let reading = PowerProbe.read() else { noBattery = true; return }
+        guard let reading = demo ? store.flatMap({ DemoData.power($0) }) : PowerProbe.read() else { noBattery = true; return }
         latest = reading
         menu.update(power: reading, unread: unreadCount)
         powerBuffer.append(PowerPoint(date: reading.date, watts: reading.systemWatts))
@@ -302,7 +302,7 @@ final class Monitor: ObservableObject {
             try store.record(power: sample, interval: interval)
             errorMessage = nil
         } catch {
-            errorMessage = "Speichern fehlgeschlagen: \(error)"
+            errorMessage = String(localized: "Speichern fehlgeschlagen: \(String(describing: error))")
         }
 
         let pidMap = Dictionary(snapshot.processes.map { ($0.pid, $0) }, uniquingKeysWith: { a, _ in a })

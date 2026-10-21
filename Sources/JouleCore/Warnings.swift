@@ -95,16 +95,16 @@ public struct WarningEngine: Sendable {
                 let fg = stats(settings.appWindow)
                 if settings.appHog, fg.covered, fg.steadiness >= 0.6, fg.watts >= settings.appWatts {
                     fire(&findings, key: "app:\(app.key)", now: now, Finding(
-                        kind: .appHog, appKey: app.key, title: "\(app.name) braucht viel Energie",
-                        body: "Seit \(Format.duration(settings.appWindow)) im Schnitt \(Format.watts(fg.watts)) – etwa \(Format.percent(hourlyPercent(fg.watts))) Akku pro Stunde.",
+                        kind: .appHog, appKey: app.key, title: String(localized: "\(app.name) braucht viel Energie"),
+                        body: String(localized: "Seit \(Format.duration(settings.appWindow)) im Schnitt \(Format.watts(fg.watts)) – etwa \(Format.percent(hourlyPercent(fg.watts))) Akku pro Stunde."),
                         value: fg.watts))
                     continue
                 }
                 let bg = stats(settings.backgroundWindow)
                 if settings.backgroundHog, bg.covered, bg.steadiness >= 0.6, !bg.everFront, bg.watts >= settings.backgroundWatts {
                     fire(&findings, key: "bg:\(app.key)", now: now, Finding(
-                        kind: .backgroundHog, appKey: app.key, title: "\(app.name) arbeitet im Hintergrund",
-                        body: "Du nutzt die App gerade nicht, sie zieht aber seit \(Format.duration(settings.backgroundWindow)) im Schnitt \(Format.watts(bg.watts)).",
+                        kind: .backgroundHog, appKey: app.key, title: String(localized: "\(app.name) arbeitet im Hintergrund"),
+                        body: String(localized: "Du nutzt die App gerade nicht, sie zieht aber seit \(Format.duration(settings.backgroundWindow)) im Schnitt \(Format.watts(bg.watts))."),
                         value: bg.watts))
                 }
             }
@@ -115,11 +115,12 @@ public struct WarningEngine: Sendable {
             let top = history.flatMap(\.usages).filter { $0.app.category == .app }
                 .reduce(into: [String: (String, Double)]()) { $0[$1.app.key, default: ($1.app.name, 0)].1 += $1.joules }
                 .values.max { $0.1 < $1.1 }
-            var body = "Dein Mac zieht im Schnitt \(Format.watts(system))"
-            if observation.source == .battery { body += " – der Akku reicht so noch etwa \(Format.duration(hours * 3600))" }
-            body += "."
-            if let top { body += " Größter Verbraucher: \(top.0)." }
-            fire(&findings, key: "system", now: now, Finding(kind: .highDrain, appKey: nil, title: "Hoher Stromverbrauch", body: body, value: system))
+            var body = observation.source == .battery
+                ? String(localized: "Dein Mac zieht im Schnitt \(Format.watts(system)) – der Akku reicht so noch etwa \(Format.duration(hours * 3600)).")
+                : String(localized: "Dein Mac zieht im Schnitt \(Format.watts(system)).")
+            if let top { body += " " + String(localized: "Größter Verbraucher: \(top.0).") }
+            fire(&findings, key: "system", now: now, Finding(kind: .highDrain, appKey: nil, title: String(localized: "Hoher Stromverbrauch"),
+                                                             body: body.replacingOccurrences(of: "..", with: "."), value: system))
         }
 
         if settings.sleepBlocker {
@@ -130,10 +131,10 @@ public struct WarningEngine: Sendable {
                 blockedSince[app.key] = since
                 let minutes = now.timeIntervalSince(since) / 60
                 if allowed, minutes >= settings.blockerMinutes {
-                    let detail = reason.isEmpty ? "" : " („\(reason)“)"
+                    let detail = reason.isEmpty ? "" : " " + String(localized: "(„\(reason)“)")
                     fire(&findings, key: "block:\(app.key)", now: now, Finding(
-                        kind: .sleepBlocker, appKey: app.key, title: "\(app.name) hält deinen Mac wach",
-                        body: "Seit \(Format.duration(minutes * 60)) verhindert \(app.name) den Ruhezustand\(detail).",
+                        kind: .sleepBlocker, appKey: app.key, title: String(localized: "\(app.name) hält deinen Mac wach"),
+                        body: String(localized: "Seit \(Format.duration(minutes * 60)) verhindert \(app.name) den Ruhezustand\(detail)."),
                         value: minutes))
                 }
             }
@@ -142,9 +143,9 @@ public struct WarningEngine: Sendable {
         if settings.lowBattery, observation.source == .battery, lowBatteryArmed, observation.percent <= settings.lowBatteryPercent {
             lowBatteryArmed = false
             let watts = systemAverage(window: 600, now: now) ?? observation.systemWatts
-            let rest = watts > 0 ? " Bei aktuellem Verbrauch noch etwa \(Format.duration(observation.remainingWh / watts * 3600))." : ""
-            findings.append(Finding(kind: .lowBattery, appKey: nil, title: "Akku bei \(Format.percent(observation.percent))",
-                                    body: "Zeit, das Netzteil zu holen.\(rest)", value: observation.percent))
+            let rest = watts > 0 ? " " + String(localized: "Bei aktuellem Verbrauch noch etwa \(Format.duration(observation.remainingWh / watts * 3600)).") : ""
+            findings.append(Finding(kind: .lowBattery, appKey: nil, title: String(localized: "Akku bei \(Format.percent(observation.percent))"),
+                                    body: (String(localized: "Zeit, das Netzteil zu holen.") + rest).replacingOccurrences(of: "..", with: "."), value: observation.percent))
         }
         return findings
     }
@@ -153,8 +154,8 @@ public struct WarningEngine: Sendable {
     public mutating func evaluate(sleep: SleepRecord) -> Finding? {
         guard settings.sleepDrain, sleep.onBattery, sleep.hours >= 1, sleep.percentLost >= 3,
               sleep.percentPerHour >= settings.sleepPercentPerHour else { return nil }
-        return Finding(kind: .sleepDrain, appKey: nil, title: "Akku im Ruhezustand verloren",
-                       body: "In \(Format.duration(sleep.hours * 3600)) Ruhezustand sind \(Format.percent(sleep.percentLost)) verloren gegangen (\(Format.percent(sleep.percentPerHour, digits: 1)) pro Stunde). Üblich sind deutlich unter 0,5 % pro Stunde.",
+        return Finding(kind: .sleepDrain, appKey: nil, title: String(localized: "Akku im Ruhezustand verloren"),
+                       body: String(localized: "In \(Format.duration(sleep.hours * 3600)) Ruhezustand sind \(Format.percent(sleep.percentLost)) verloren gegangen (\(Format.percent(sleep.percentPerHour, digits: 1)) pro Stunde). Üblich sind deutlich unter \(Format.percent(0.5, digits: 1)) pro Stunde."),
                        value: sleep.percentPerHour)
     }
 

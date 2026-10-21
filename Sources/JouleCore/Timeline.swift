@@ -90,7 +90,7 @@ extension Store {
                                             seconds: seconds[key] ?? 0)
             }
             if let locked = seconds[Store.loginWindowKey], locked >= 60 {
-                lanes.append(SessionTimeline.Lane(kind: .locked, name: "Gesperrt", app: nil,
+                lanes.append(SessionTimeline.Lane(kind: .locked, name: String(localized: "Gesperrt"), app: nil,
                                                   blocks: merged.filter { $0.key == Store.loginWindowKey }.map { DateInterval(start: Date(timeIntervalSince1970: $0.start), end: Date(timeIntervalSince1970: $0.end)) },
                                                   seconds: locked))
             }
@@ -145,14 +145,14 @@ extension Narrative {
     /// One or two short sentences for tight spaces like the menu bar panel.
     public static func headline(_ breakdown: SessionBreakdown) -> String {
         guard breakdown.percentUsed >= 1, let top = breakdown.entries.first else {
-            return "Noch kein volles Prozent verbraucht."
+            return String(localized: "Noch kein volles Prozent verbraucht.")
         }
         let apps = breakdown.entries.filter { $0.kind == .app }.reduce(0) { $0 + $1.percent }
-        let appsText = "Apps zusammen \(Format.percent(apps, digits: 1))."
+        let appsText = String(localized: "Apps zusammen \(Format.percent(apps, digits: 1)).")
         switch top.kind {
-        case .hardware: return "Größter Posten: Bildschirm und Grundlast. \(appsText)"
-        case .sleep: return "Größter Posten: der Ruhezustand. \(appsText)"
-        default: return "Größter Posten: \(top.name) mit \(Format.percent(top.percent, digits: 1))."
+        case .hardware: return String(localized: "Größter Posten: Bildschirm und Grundlast.") + " " + appsText
+        case .sleep: return String(localized: "Größter Posten: der Ruhezustand.") + " " + appsText
+        default: return String(localized: "Größter Posten: \(top.name) mit \(Format.percent(top.percent, digits: 1)).")
         }
     }
 }

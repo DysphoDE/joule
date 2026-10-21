@@ -20,7 +20,7 @@ struct NowView: View {
                 Card(padding: 24) {
                     VStack(alignment: .leading, spacing: 6) {
                         Text("Am Netzteil").font(.system(size: 22, weight: .bold))
-                        EmptyNote(text: "Sobald du das Netzteil abziehst, zeigt Joule hier, wohin jedes Prozent fließt.")
+                        EmptyNote("Sobald du das Netzteil abziehst, zeigt Joule hier, wohin jedes Prozent fließt.")
                     }
                 }
             }
@@ -71,7 +71,7 @@ private struct NowHeader: View {
                 .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).strokeBorder(Theme.glassEdge.opacity(0.8), lineWidth: 1))
                 .shadow(color: .black.opacity(0.07), radius: 3, y: 1)
             } else {
-                EmptyNote(text: monitor.noBattery ? "Dieser Mac meldet keinen Akku." : "Lese Akkuwerte …")
+                EmptyNote(text: monitor.noBattery ? String(localized: "Dieser Mac meldet keinen Akku.") : String(localized: "Lese Akkuwerte …"))
             }
         }
     }
@@ -92,7 +92,7 @@ private struct LiveAppsCard: View {
                         .imageScale(.small)
                 }
                 if monitor.liveApps.isEmpty {
-                    EmptyNote(text: "Messe …").frame(minHeight: 120, alignment: .topLeading)
+                    EmptyNote("Messe …").frame(minHeight: 120, alignment: .topLeading)
                 } else {
                     let maximum = max(0.5, monitor.liveApps.map(\.watts).max() ?? 1)
                     VStack(spacing: 2) {
@@ -152,7 +152,7 @@ private struct BlockersCard: View {
                         SymbolTile(symbol: "cup.and.saucer.fill", tint: .brown, size: 34)
                         VStack(alignment: .leading, spacing: 1) {
                             Text("\(blocker.app.name) verhindert den Ruhezustand").font(.system(size: 14, weight: .semibold))
-                            Text([blocker.since.map { "seit \(Format.duration(Date().timeIntervalSince($0)))" }, blocker.reason.isEmpty ? nil : "„\(blocker.reason)“"]
+                            Text([blocker.since.map { String(localized: "seit \(Format.duration(Date().timeIntervalSince($0)))") }, blocker.reason.isEmpty ? nil : String(localized: "„\(blocker.reason)“")]
                                 .compactMap { $0 }.joined(separator: " · "))
                                 .font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(1)
                         }
@@ -170,7 +170,7 @@ private struct BlockersCard: View {
                     }
                     .controlSize(.regular)
                     if monitor.blockers.count > 1 {
-                        Text("Außerdem: \(monitor.blockers.dropFirst().map(\.app.name).joined(separator: ", "))")
+                        Text("Außerdem: \(monitor.blockers.dropFirst().map(\.app.name).formatted(.list(type: .and).locale(Format.locale)))")
                             .font(.system(size: 11.5)).foregroundStyle(.secondary)
                     }
                 } else {
@@ -194,7 +194,7 @@ struct BlockerRow: View {
             AppIcon(app: blocker.app, size: 22)
             VStack(alignment: .leading, spacing: 1) {
                 Text(blocker.app.name).font(.system(size: 12.5, weight: .medium))
-                Text(blocker.reason.isEmpty ? "ohne Angabe" : blocker.reason).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
+                Text(blocker.reason.isEmpty ? String(localized: "ohne Angabe") : blocker.reason).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
             }
             Spacer()
             if let since = blocker.since {
@@ -213,7 +213,7 @@ struct EstimatedPill: View {
 }
 
 struct StatTile: View {
-    var label: String
+    var label: LocalizedStringKey
     var value: String
     var detail: String
 
@@ -239,7 +239,7 @@ struct TintedIconLabel: LabelStyle {
 }
 
 struct Metric: View {
-    var label: String
+    var label: LocalizedStringKey
     var value: String
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
@@ -250,9 +250,11 @@ struct Metric: View {
 }
 
 struct EmptyNote: View {
-    var text: String
+    var content: Text
+    init(text: String) { content = Text(verbatim: text) }
+    init(_ key: LocalizedStringKey) { content = Text(key) }
     var body: some View {
-        Text(text).font(.system(size: 13)).foregroundStyle(.secondary).frame(maxWidth: .infinity, alignment: .leading)
+        content.font(.system(size: 13)).foregroundStyle(.secondary).frame(maxWidth: .infinity, alignment: .leading)
             .fixedSize(horizontal: false, vertical: true)
     }
 }
@@ -275,11 +277,12 @@ struct PowerSplitView: View {
     var split: LiveSplit?
     var compact = false
 
-    private var parts: [(String, Double, Color)] {
+    /// Name, short name for the compact legend, watts, colour.
+    private var parts: [(String, String, Double, Color)] {
         guard let split else { return [] }
-        return [("Apps", split.apps, Theme.apps),
-                ("macOS-Dienste", split.services, Theme.services),
-                ("Display & Hardware", split.hardware(total: total), Theme.hardware)]
+        return [(String(localized: "Apps"), String(localized: "Apps"), split.apps, Theme.apps),
+                (String(localized: "macOS-Dienste"), String(localized: "Dienste"), split.services, Theme.services),
+                (String(localized: "Display & Hardware"), String(localized: "Display & Co."), split.hardware(total: total), Theme.hardware)]
     }
 
     var body: some View {
@@ -289,10 +292,10 @@ struct PowerSplitView: View {
                     if parts.isEmpty {
                         Capsule().fill(Theme.track)
                     } else {
-                        let sum = max(0.001, parts.reduce(0) { $0 + $1.1 })
+                        let sum = max(0.001, parts.reduce(0) { $0 + $1.2 })
                         ForEach(parts, id: \.0) { part in
-                            Rectangle().fill(part.2)
-                                .frame(width: max(part.1 > 0.01 ? 3 : 0, (proxy.size.width - 4) * part.1 / sum))
+                            Rectangle().fill(part.3)
+                                .frame(width: max(part.2 > 0.01 ? 3 : 0, (proxy.size.width - 4) * part.2 / sum))
                         }
                     }
                 }
@@ -305,10 +308,10 @@ struct PowerSplitView: View {
                 } else {
                     ForEach(parts, id: \.0) { part in
                         HStack(spacing: 4) {
-                            Circle().fill(part.2).frame(width: 6, height: 6)
-                            Text(compact && part.0 == "Display & Hardware" ? "Display & Co." : (compact && part.0 == "macOS-Dienste" ? "Dienste" : part.0))
+                            Circle().fill(part.3).frame(width: 6, height: 6)
+                            Text(compact ? part.1 : part.0)
                                 .foregroundStyle(.secondary)
-                            Text(Format.watts(part.1)).monospacedDigit()
+                            Text(Format.watts(part.2)).monospacedDigit()
                         }
                         .lineLimit(1)
                     }

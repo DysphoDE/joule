@@ -149,7 +149,7 @@ struct MenuPanel: View {
             HStack {
                 Image(systemName: monitor.unreadAlerts > 0 ? "bell.badge.fill" : "bell")
                     .foregroundStyle(monitor.unreadAlerts > 0 ? Theme.accent : .secondary)
-                Text(monitor.unreadAlerts == 0 ? "Keine neuen Hinweise" : (monitor.unreadAlerts == 1 ? "1 neuer Hinweis" : "\(monitor.unreadAlerts) neue Hinweise"))
+                Text(monitor.unreadAlerts == 0 ? String(localized: "Keine neuen Hinweise") : (monitor.unreadAlerts == 1 ? String(localized: "1 neuer Hinweis") : String(localized: "\(monitor.unreadAlerts) neue Hinweise")))
                     .foregroundStyle(monitor.unreadAlerts > 0 ? .primary : .secondary)
                 Spacer()
                 Image(systemName: "chevron.right").foregroundStyle(.tertiary)
@@ -226,7 +226,7 @@ struct SettingsView: View {
                     LabeledContent("Speicherort") {
                         Button("Im Finder zeigen") { NSWorkspace.shared.activateFileViewerSelecting([Store.defaultURL]) }
                     }
-                    LabeledContent("Aufbewahrung", value: "90 Tage, Minutenwerte 7 Tage")
+                    LabeledContent("Aufbewahrung", value: String(localized: "90 Tage, Minutenwerte 7 Tage"))
                     Button("Gesamten Verlauf löschen …", role: .destructive) { confirmErase = true }
                 }
             }
@@ -289,11 +289,15 @@ struct SettingsView: View {
         }
     }
 
-    private func slider(_ label: String, value: Binding<Double>, range: ClosedRange<Double>, unit: String, step: Double) -> some View {
+    private func slider(_ label: LocalizedStringKey, value: Binding<Double>, range: ClosedRange<Double>, unit: LocalizedStringKey, step: Double) -> some View {
         LabeledContent(label) {
             HStack {
                 Slider(value: value, in: range, step: step).frame(width: 220)
-                Text("\(Format.number(value.wrappedValue, digits: step < 1 ? 1 : 0)) \(unit)").monospacedDigit().frame(width: 64, alignment: .trailing)
+                HStack(spacing: 3) {
+                    Text(verbatim: Format.number(value.wrappedValue, digits: step < 1 ? 1 : 0))
+                    Text(unit)
+                }
+                .monospacedDigit().frame(width: 72, alignment: .trailing)
             }
         }
     }
@@ -314,7 +318,7 @@ private struct MethodView: View {
         }
     }
 
-    private func item(_ title: String, _ symbol: String, _ text: String) -> some View {
+    private func item(_ title: LocalizedStringKey, _ symbol: String, _ text: LocalizedStringKey) -> some View {
         HStack(alignment: .top, spacing: 12) {
             Image(systemName: symbol).foregroundStyle(Theme.accent).frame(width: 20)
             VStack(alignment: .leading, spacing: 3) {

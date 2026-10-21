@@ -7,11 +7,11 @@ public enum Period: String, CaseIterable, Identifiable, Sendable {
 
     public var title: String {
         switch self {
-        case .hour: "1 Std."
-        case .today: "Heute"
-        case .day: "24 Std."
-        case .week: "7 Tage"
-        case .month: "30 Tage"
+        case .hour: String(localized: "1 Std.")
+        case .today: String(localized: "Heute")
+        case .day: String(localized: "24 Std.")
+        case .week: String(localized: "7 Tage")
+        case .month: String(localized: "30 Tage")
         }
     }
 
@@ -385,14 +385,14 @@ extension Store {
         // Everything measured but not listed, including the tiny apps the report leaves out.
         let rest = report.breakdown.apps + report.breakdown.services - entries.reduce(0) { $0 + $1.joules }
         if rest > 0.5 {
-            entries.append(ShareEntry(kind: .others, name: "Weitere Apps & Dienste", app: nil, joules: rest, percent: percent(rest), estimated: false))
+            entries.append(ShareEntry(kind: .others, name: String(localized: "Weitere Apps & Dienste"), app: nil, joules: rest, percent: percent(rest), estimated: false))
         }
         if report.breakdown.hardware > 0 {
-            entries.append(ShareEntry(kind: .hardware, name: "Display & Hardware", app: nil, joules: report.breakdown.hardware,
+            entries.append(ShareEntry(kind: .hardware, name: String(localized: "Display & Hardware"), app: nil, joules: report.breakdown.hardware,
                                       percent: percent(report.breakdown.hardware), estimated: false))
         }
         if sleepLost > 0 {
-            entries.append(ShareEntry(kind: .sleep, name: "Ruhezustand", app: nil, joules: 0, percent: sleepLost, estimated: false))
+            entries.append(ShareEntry(kind: .sleep, name: String(localized: "Ruhezustand"), app: nil, joules: 0, percent: sleepLost, estimated: false))
         }
         // Rows that would read "0,0 %" only add noise; fold them into the rest.
         let tiny = entries.filter { ($0.kind == .app || $0.kind == .service) && $0.percent < 0.05 }
@@ -403,7 +403,7 @@ extension Store {
                 entries[index].joules += joules
                 entries[index].percent += share
             } else {
-                entries.append(ShareEntry(kind: .others, name: "Weitere Apps & Dienste", app: nil, joules: joules, percent: share, estimated: false))
+                entries.append(ShareEntry(kind: .others, name: String(localized: "Weitere Apps & Dienste"), app: nil, joules: joules, percent: share, estimated: false))
             }
         }
         entries.sort { $0.percent > $1.percent }
