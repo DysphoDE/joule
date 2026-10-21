@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <a href="../../releases/latest">Download</a> ·
+  <a href="https://github.com/DysphoDE/joule/releases/latest">Download</a> ·
   <a href="#how-joule-measures">How it measures</a> ·
   <a href="#build-from-source">Build from source</a>
 </p>
@@ -43,7 +43,7 @@
 
 ## Install
 
-1. Download `Joule-x.y.z.dmg` from the [latest release](../../releases/latest) and drag **Joule** into **Applications**.
+1. Download `Joule-x.y.z.dmg` from the [latest release](https://github.com/DysphoDE/joule/releases/latest) and drag **Joule** into **Applications**.
 2. Joule is open source and not notarized by Apple, so macOS blocks the first launch. Open it once anyway:
    - **macOS 15 and later:** try to open Joule, then go to **System Settings › Privacy & Security** and click **Open Anyway**.
    - **macOS 14:** right-click Joule in Applications and choose **Open**.
