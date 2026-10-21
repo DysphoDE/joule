@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="design/icons/3-Ring.png" width="128" alt="Joule app icon">
+  <img src="docs/icon.png" width="128" alt="Joule app icon">
 </p>
 
 <h1 align="center">Joule</h1>
