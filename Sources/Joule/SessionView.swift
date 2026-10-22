@@ -21,7 +21,10 @@ struct SessionBreakdownView: View {
         let start = Format.dayTime(session.start)
         let range = "\(Format.number(session.percentStart, digits: 0)) % → \(Format.number(session.percentEnd, digits: 0)) %"
         if breakdown.startsAtRecording { return String(localized: "Seit Aufzeichnungsbeginn · \(start) · \(range)") }
-        return session.ongoing ? String(localized: "Seit dem Abstecken · \(start) · \(range)") : String(localized: "\(start) bis \(Format.time(session.end)) · \(range)")
+        if !session.ongoing { return String(localized: "\(start) bis \(Format.time(session.end)) · \(range)") }
+        // Charged with the lid closed: Joule never saw the plug, only the full battery afterwards.
+        return session.chargedUnseen ? String(localized: "Seit der letzten Ladung · \(start) · \(range)")
+                                     : String(localized: "Seit dem Abstecken · \(start) · \(range)")
     }
 
     var body: some View {
@@ -108,7 +111,7 @@ struct SessionTimelineView: View {
                         RoundedRectangle(cornerRadius: 2).fill(color).frame(width: 8, height: 8)
                         Text(lane.name).font(.system(size: 12)).lineLimit(1)
                         Spacer(minLength: 2)
-                        Text(Format.duration(lane.seconds)).font(.system(size: 10.5)).foregroundStyle(.secondary)
+                        Text(Format.duration(lane.seconds, short: true)).font(.system(size: 10.5)).foregroundStyle(.secondary)
                     }
                     .frame(width: labelWidth)
                     GeometryReader { proxy in

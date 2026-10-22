@@ -406,6 +406,44 @@ struct SleepCleanupTests {
     }
 }
 
+struct SessionSplitTests {
+    func chargingWhileAsleepStartsANewSession() throws {
+        let store = try Store(url: FileManager.default.temporaryDirectory.appendingPathComponent("joule-split-\(UUID().uuidString).sqlite"))
+        let base = Date().addingTimeInterval(-3 * 86400)
+        func minute(_ at: Date, _ percent: Double) throws {
+            try store.record(power: PowerSample(start: at.addingTimeInterval(-60), end: at, source: .battery, percent: percent, watts: 8,
+                                                remainingWh: percent, fullWh: 100, brightness: nil, frontmost: nil), interval: nil)
+        }
+        // Day 1: 77 → 60 in ten minutes, then 20 hours asleep on battery (still the same charge).
+        for i in 0..<10 { try minute(base.addingTimeInterval(Double(i) * 60), 77 - Double(i) * 1.9) }
+        try store.recordSleep(SleepRecord(start: base.addingTimeInterval(600), end: base.addingTimeInterval(20 * 3600), percentBefore: 60, percentAfter: 58, onBattery: true))
+        for i in 0..<10 { try minute(base.addingTimeInterval(20 * 3600 + Double(i) * 60), 58 - Double(i)) }
+        // Then charged with the lid closed, never seeing the adapter, and used from 100 %.
+        let later = base.addingTimeInterval(30 * 3600)
+        try store.recordSleep(SleepRecord(start: base.addingTimeInterval(20 * 3600 + 600), end: later, percentBefore: 49, percentAfter: 100, onBattery: false))
+        for i in 0..<10 { try minute(later.addingTimeInterval(Double(i) * 60), 100 - Double(i)) }
+
+        let sessions = try store.sessions(since: base.addingTimeInterval(-3600))
+        expect(sessions.count == 2)
+        let current = try require(sessions.first)
+        expect(current.ongoing)
+        expect(current.chargedUnseen)
+        expect(current.percentStart == 100)
+        expect(current.percentUsed == 9)
+        let first = try require(sessions.last)
+        expect(first.percentStart == 77)
+        expect(first.percentEnd == 49)
+
+        let breakdown = try store.breakdown(of: current)
+        expect(!breakdown.startsAtRecording)
+        expect(breakdown.unrecordedSeconds < 120)
+        try expect(try store.breakdown(of: first).startsAtRecording)
+
+        let strips = try store.dayStrips(DateInterval(start: base.addingTimeInterval(-86400), end: Date()))
+        expect(strips.contains { $0.blocks.contains { $0.kind == .charging } })
+    }
+}
+
 // The Command Line Tools ship neither XCTest nor the Swift Testing macros, so: a tiny harness.
 nonisolated(unsafe) var failures: [String] = []
 nonisolated(unsafe) var current = ""
@@ -456,5 +494,6 @@ run("NarrativeTests.explainsAScreenDominatedLockedSession") { try NarrativeTests
 run("NarrativeTests.namesTheAppWhenOneDominates") { try NarrativeTests().namesTheAppWhenOneDominates() }
 run("TimelineTests.lanesAndDayStrips") { try TimelineTests().lanesAndDayStrips() }
 run("SleepCleanupTests.rowsSpanningSleepAreRemoved") { try SleepCleanupTests().rowsSpanningSleepAreRemoved() }
+run("SessionSplitTests.chargingWhileAsleepStartsANewSession") { try SessionSplitTests().chargingWhileAsleepStartsANewSession() }
 print("")
 if failures.isEmpty { print("\(passedCount) Prüfungen bestanden.") } else { failures.forEach { print("FEHLER", $0) }; exit(1) }

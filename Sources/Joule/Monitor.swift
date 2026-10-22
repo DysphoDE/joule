@@ -106,7 +106,6 @@ final class Monitor: ObservableObject {
     private var sleepStart: (date: Date, percent: Double, battery: Bool)?
     private var timers: [Timer] = []
     private var liveTimer: Timer?
-    private var liveClients = 0
     private var powerSourceLoop: CFRunLoopSource?
     private var lastSource: PowerSource?
 
@@ -166,33 +165,43 @@ final class Monitor: ObservableObject {
 
     // MARK: Live mode while a window or the menu panel is visible
 
-    func beginLive() {
-        liveClients += 1
-        if latest == nil { readPower() }
-        guard liveTimer == nil else { return }
-        publishLive()
-        refreshDerived(force: true)
-        _ = liveAccountant.ingest(.capture())
-        let timer = Timer(timeInterval: Self.liveInterval, repeats: true) { [weak self] _ in
-            MainActor.assumeIsolated { self?.liveTick() }
-        }
-        RunLoop.main.add(timer, forMode: .common)
-        liveTimer = timer
-        // A first list right away instead of after three seconds.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { [weak self] in self?.liveTick() }
-    }
+    /// Views call these when they appear or go away. They only trigger a re-check: whether live
+    /// sampling runs depends on what is actually visible, not on counting SwiftUI appear/disappear
+    /// events, which windows and the menu bar panel do not deliver reliably.
+    func beginLive() { updateLive() }
 
     func endLive() {
-        liveClients = max(0, liveClients - 1)
-        guard liveClients == 0 else { return }
-        liveTimer?.invalidate()
-        liveTimer = nil
-        liveAccountant.reset()
+        DispatchQueue.main.async { [weak self] in self?.updateLive() }
+    }
+
+    /// Starts the 3-second sampling while a Joule window or the panel is on screen, stops it otherwise.
+    private func updateLive() {
+        let looking = Self.someoneIsLooking
+        if looking, liveTimer == nil {
+            if latest == nil { readPower() }
+            publishLive()
+            refreshDerived(force: true)
+            _ = liveAccountant.ingest(.capture())
+            let timer = Timer(timeInterval: Self.liveInterval, repeats: true) { [weak self] _ in
+                MainActor.assumeIsolated { self?.liveTick() }
+            }
+            timer.tolerance = 0.3
+            RunLoop.main.add(timer, forMode: .common)
+            liveTimer = timer
+            // A first list right away instead of after three seconds.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { [weak self] in self?.liveTick() }
+        } else if !looking, let timer = liveTimer {
+            timer.invalidate()
+            liveTimer = nil
+            liveAccountant.reset()
+        } else if looking, stale {
+            refreshDerived(force: true)
+        }
     }
 
     private func liveTick() {
         // Locked screen, closed window, closed menu panel: nobody is watching, save the energy.
-        guard Self.someoneIsLooking else { return }
+        guard Self.someoneIsLooking else { updateLive(); return }
         if stale { refreshDerived(force: true) }
         readPower()
         if demo {
@@ -366,7 +375,7 @@ final class Monitor: ObservableObject {
         stale = false
         publishLive()
         today = try? store.report(Period.today.interval(), bucket: Period.today.bucket, batteryOnly: false)
-        if let session = (try? store.sessions(since: Date().addingTimeInterval(-3 * 86400)))?.first {
+        if let session = (try? store.sessions(since: Date().addingTimeInterval(-30 * 86400)))?.first {
             currentSession = try? store.breakdown(of: session)
             currentTimeline = try? store.timeline(of: session)
         } else {
@@ -415,13 +424,12 @@ final class Monitor: ObservableObject {
 
     private func observeSystem() {
         // A window coming into view gets fresh numbers at once instead of on the next live tick.
-        for name in [NSWindow.didChangeOcclusionStateNotification, NSWindow.didBecomeKeyNotification] {
+        // Windows and the panel appearing, disappearing or getting covered decide about live sampling.
+        for name in [NSWindow.didChangeOcclusionStateNotification, NSWindow.didBecomeKeyNotification,
+                     NSWindow.willCloseNotification, NSWindow.didMiniaturizeNotification, NSWindow.didDeminiaturizeNotification] {
             NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
-                MainActor.assumeIsolated {
-                    guard let self, self.stale, Self.someoneIsLooking else { return }
-                    self.refreshDerived(force: true)
-                    if self.liveTimer != nil { self.liveTick() }
-                }
+                // After the event has taken effect (a closing window is still visible while it closes).
+                DispatchQueue.main.async { MainActor.assumeIsolated { self?.updateLive() } }
             }
         }
         let center = NSWorkspace.shared.notificationCenter

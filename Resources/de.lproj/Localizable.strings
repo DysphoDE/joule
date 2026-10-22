@@ -213,6 +213,7 @@
 "Seit dem Abstecken ist noch kein volles Prozent verbraucht. Sobald der Akku sinkt, siehst du hier, wer es war." = "Seit dem Abstecken ist noch kein volles Prozent verbraucht. Sobald der Akku sinkt, siehst du hier, wer es war.";
 "Seit dem Abstecken · %@ · %@" = "Seit dem Abstecken · %@ · %@";
 "Seit dem Abstecken −%@ %%" = "Seit dem Abstecken −%@ %%";
+"Seit der letzten Ladung · %@ · %@" = "Seit der letzten Ladung · %@ · %@";
 "So wird gemessen" = "So wird gemessen";
 "Sobald dein Mac einmal länger als eine halbe Stunde geschlafen hat, erscheint er hier." = "Sobald dein Mac einmal länger als eine halbe Stunde geschlafen hat, erscheint er hier.";
 "Sobald du absteckst, zeigt Joule, wohin der Akku fließt." = "Sobald du absteckst, zeigt Joule, wohin der Akku fließt.";

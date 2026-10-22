@@ -121,6 +121,8 @@ public struct DischargeSession: Sendable, Identifiable, Hashable {
     public var joules: Double
     public var awakeSeconds: Double
     public var ongoing: Bool
+    /// The battery was charged without Joule seeing the adapter (lid closed while charging).
+    public var chargedUnseen = false
     public var id: Date { start }
 
     public var percentUsed: Double { max(0, percentStart - percentEnd) }
@@ -263,38 +265,43 @@ extension Store {
         }
     }
 
-    /// Unplugged stretches, newest first. Sleep inside a stretch does not end it.
+    /// Stretches on battery between two charges, newest first.
+    ///
+    /// A session ends when the adapter shows up, or when the level rose between two
+    /// samples: the Mac charged while asleep, so Joule never saw the adapter. Long sleep
+    /// on battery does not end a session – the charge is still the same.
     public func sessions(since: Date) throws -> [DischargeSession] {
         try locked {
             var sessions: [DischargeSession] = []
             var current: DischargeSession?
-            var lastT: Double = 0
             try database.query("SELECT t, dt, source, percent, watts FROM power WHERE t > ? ORDER BY t", since.timeIntervalSince1970) { row in
                 let t = row.double(0), dt = row.double(1), percent = row.double(3), watts = row.double(4)
-                let onBattery = row.string(2) == PowerSource.battery.rawValue
-                if onBattery {
-                    if var session = current, t - lastT < 12 * 3600 {
-                        session.end = Date(timeIntervalSince1970: t)
-                        session.percentEnd = percent
-                        session.joules += watts * dt
-                        session.awakeSeconds += dt
-                        current = session
-                    } else {
-                        if let finished = current { sessions.append(finished) }
-                        current = DischargeSession(start: Date(timeIntervalSince1970: t - dt), end: Date(timeIntervalSince1970: t),
-                                                   percentStart: percent, percentEnd: percent, joules: watts * dt, awakeSeconds: dt, ongoing: false)
-                    }
-                } else if let finished = current {
-                    sessions.append(finished)
+                guard row.string(2) == PowerSource.battery.rawValue else {
+                    if let finished = current { sessions.append(finished) }
                     current = nil
+                    return
                 }
-                lastT = t
+                if var session = current, percent < session.percentEnd + 2 {
+                    session.end = Date(timeIntervalSince1970: t)
+                    session.percentEnd = percent
+                    session.joules += watts * dt
+                    session.awakeSeconds += dt
+                    current = session
+                } else {
+                    let chargedUnseen = current != nil
+                    if let finished = current { sessions.append(finished) }
+                    var session = DischargeSession(start: Date(timeIntervalSince1970: t - dt), end: Date(timeIntervalSince1970: t),
+                                                   percentStart: percent, percentEnd: percent, joules: watts * dt, awakeSeconds: dt, ongoing: false)
+                    session.chargedUnseen = chargedUnseen
+                    current = session
+                }
             }
             if var last = current {
                 last.ongoing = true
                 sessions.append(last)
             }
-            return sessions.filter { $0.awakeSeconds >= 300 }.reversed()
+            // Keep the running one even if it is young; older ones only with some substance.
+            return sessions.enumerated().filter { $0.element.ongoing || $0.element.awakeSeconds >= 300 }.map(\.element).reversed()
         }
     }
 
@@ -367,6 +374,9 @@ extension Store {
         let interval = DateInterval(start: session.start, end: max(session.end, session.start.addingTimeInterval(1)))
         let report = try self.report(interval, bucket: 3600, batteryOnly: true)
         var sleepLost = 0.0, sleepSeconds = 0.0
+        let allSleep = report.sleeps.reduce(0.0) { sum, sleep in
+            sum + max(0, min(sleep.end, interval.end).timeIntervalSince(max(sleep.start, interval.start)))
+        }
         for sleep in report.sleeps where sleep.onBattery && sleep.start >= session.start.addingTimeInterval(-60) {
             sleepLost += sleep.percentLost
             sleepSeconds += sleep.end.timeIntervalSince(sleep.start)
@@ -426,13 +436,13 @@ extension Store {
 
         let earlier: Bool = try locked {
             var found = false
-            try database.query("SELECT 1 FROM power WHERE t <= ? AND t > ? LIMIT 1",
-                               session.start.timeIntervalSince1970, session.start.timeIntervalSince1970 - 12 * 3600) { _ in found = true }
+            // Any sample before the session means Joule was already recording.
+            try database.query("SELECT 1 FROM power WHERE t <= ? LIMIT 1", session.start.timeIntervalSince1970) { _ in found = true }
             return found
         }
         let wall = session.end.timeIntervalSince(session.start)
         var result = SessionBreakdown(session: session, entries: entries, sleepHours: sleepSeconds / 3600, startsAtRecording: !earlier,
-                                      unrecordedSeconds: max(0, wall - sleepSeconds - report.recordedSeconds))
+                                      unrecordedSeconds: max(0, wall - allSleep - report.recordedSeconds))
         result.lockedSeconds = lockedSeconds
         result.lockedPercent = percent(lockedJoules)
         result.averageBrightness = brightnessSeconds > 0 ? brightnessSum / brightnessSeconds : nil

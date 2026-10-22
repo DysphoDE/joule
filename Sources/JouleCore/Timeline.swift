@@ -102,15 +102,16 @@ extension Store {
     public func dayStrips(_ interval: DateInterval, calendar: Calendar = .current) throws -> [DayStrip] {
         try locked {
             let rows = try rows(from: interval.start.timeIntervalSince1970, to: interval.end.timeIntervalSince1970)
-            var sleeps: [(start: Double, end: Double)] = []
-            try database.query("SELECT start, end FROM sleeps WHERE end > ? AND start < ?", interval.start.timeIntervalSince1970, interval.end.timeIntervalSince1970) { row in
-                sleeps.append((row.double(0), row.double(1)))
+            var sleeps: [(start: Double, end: Double, charged: Bool)] = []
+            try database.query("SELECT start, end, before, after FROM sleeps WHERE end > ? AND start < ?", interval.start.timeIntervalSince1970, interval.end.timeIntervalSince1970) { row in
+                // Level went up while asleep: it was charging with the lid closed.
+                sleeps.append((row.double(0), row.double(1), row.double(3) > row.double(2) + 1))
             }
             func kind(_ source: PowerSource) -> DayStrip.Kind {
                 switch source { case .battery: .battery; case .charging: .charging; case .adapter: .adapter }
             }
             let merged = Self.blocks(rows.map { (start: $0.start, end: $0.end, key: kind($0.source)) })
-                + sleeps.map { (start: $0.start, end: $0.end, key: DayStrip.Kind.sleep) }
+                + sleeps.map { (start: $0.start, end: $0.end, key: $0.charged ? DayStrip.Kind.charging : DayStrip.Kind.sleep) }
 
             var strips: [DayStrip] = []
             var day = calendar.startOfDay(for: interval.start)

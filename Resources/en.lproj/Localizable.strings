@@ -213,6 +213,7 @@
 "Seit dem Abstecken ist noch kein volles Prozent verbraucht. Sobald der Akku sinkt, siehst du hier, wer es war." = "Not a full percent used since unplugging. As soon as the battery drops, you’ll see here what used it.";
 "Seit dem Abstecken · %@ · %@" = "Since unplugging · %@ · %@";
 "Seit dem Abstecken −%@ %%" = "Since unplugging −%@ %%";
+"Seit der letzten Ladung · %@ · %@" = "Since the last charge · %@ · %@";
 "So wird gemessen" = "How it measures";
 "Sobald dein Mac einmal länger als eine halbe Stunde geschlafen hat, erscheint er hier." = "As soon as your Mac has slept for more than half an hour, it shows up here.";
 "Sobald du absteckst, zeigt Joule, wohin der Akku fließt." = "Once you unplug, Joule shows where the battery goes.";
